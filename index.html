@@ -1,178 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AdPulse</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        /* --- Modern Dark Theme --- */
-        :root {
-            --bg-color: #0d1117;     /* Deep dark background */
-            --card-color: #161b22;   /* Slightly lighter dark for the box */
-            --text-main: #c9d1d9;    /* Light gray text */
-            --text-sub: #8b949e;     /* Subdued text */
-            --glow-green: #3fb950;   /* Success green */
-            --glow-orange: #f85149;  /* Warning/Video red-orange */
-        }
+  <meta charset="UTF-8">
+  <title>AdPulse</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+      color: #fff;
+      text-align: center;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
 
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background: var(--bg-color); color: var(--text-main); margin: 0; padding-top: 80px; }
-        
-        /* Blinking Red Notice (Stays same for visibility) */
-        .blink-notice {
-            position: fixed; top: 0; width: 100%; background: #b30000; color: white;
-            padding: 15px 0; font-weight: bold; z-index: 1000; font-size: 13px;
-            animation: blinker 1.5s linear infinite; box-shadow: 0 4px 10px rgba(179, 0, 0, 0.4);
-        }
-        @keyframes blinker { 50% { opacity: 0.3; } }
+    .banner {
+      background: #e74c3c;
+      padding: 10px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      width: 100%;
+    }
 
-        .card { 
-            background: var(--card-color); width: 85%; max-width: 380px; margin: 20px auto; 
-            padding: 25px; border-radius: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
-            border: 1px solid #30363d; /* Subtle border for definition */
-        }
-        h2 { color: #f0f6fc; margin-top: 0; font-weight: 800; }
-        
-        /* --- Glowing Button Effects --- */
-        .btn { 
-            width: 100%; padding: 18px; font-size: 18px; border-radius: 12px; border: none; 
-            cursor: pointer; font-weight: bold; transition: 0.4s; text-transform: uppercase;
-        }
+    .card {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 30px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+      max-width: 400px;
+      width: 90%;
+    }
 
-        .btn-main { 
-            background: var(--glow-green); color: white; 
-            box-shadow: 0 4px 15px rgba(63, 185, 80, 0.3);
-        }
-        .btn-main:active { transform: scale(0.97); }
-        .btn-main:disabled { 
-            background: #2a3b2a; cursor: not-allowed; 
-            box-shadow: none; color: #555;
-        }
+    h1 {
+      margin-bottom: 10px;
+      font-size: 24px;
+      color: #f1c40f;
+    }
 
-        /* Continuous Pulse Glow */
-        @keyframes pulseGlowGreen {
-            0% { box-shadow: 0 0 5px rgba(63, 185, 80, 0.4); }
-            50% { box-shadow: 0 0 20px rgba(63, 185, 80, 0.8); }
-            100% { box-shadow: 0 0 5px rgba(63, 185, 80, 0.4); }
-        }
-        #adBtn:not(:disabled) { animation: pulseGlowGreen 2s infinite; }
+    .info {
+      margin-bottom: 20px;
+      font-size: 16px;
+    }
 
-        .btn-video { 
-            background: #d15700; color: white; margin-top: 15px; 
-            box-shadow: 0 4px 15px rgba(209, 87, 0, 0.3);
-        }
-        .btn-video:active { background: #b04900; }
+    button {
+      display: block;
+      width: 100%;
+      padding: 15px;
+      margin: 10px 0;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
 
-        .info { margin: 15px 0; font-size: 14px; color: var(--text-sub); }
-        #timerDisplay { color: #f85149; font-weight: bold; }
+    button:disabled {
+      background: #7f8c8d;
+      cursor: not-allowed;
+    }
 
-        /* Construction Overlay (Updated for Dark Theme) */
-        #overlay {
-            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.95); z-index: 2000; color: #f0f6fc;
-            align-items: center; justify-content: center; flex-direction: column;
-        }
-        .modal-btn { background: #30363d; color: white; border: 1px solid #555; padding: 10px 30px; border-radius: 5px; margin-top: 20px; }
-    </style>
+    .earn-btn {
+      background: #27ae60;
+      color: #fff;
+    }
+    .earn-btn:hover:not(:disabled) {
+      background: #2ecc71;
+    }
+
+    .video-btn {
+      background: #e67e22;
+      color: #fff;
+    }
+    .video-btn:hover {
+      background: #f39c12;
+    }
+
+    .timer {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #bdc3c7;
+    }
+
+    .notice {
+      margin-top: 20px;
+      font-size: 16px;
+      color: #f1c40f;
+      display: none;
+    }
+  </style>
 </head>
 <body>
+  <div class="banner">NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS</div>
+  <div class="card">
+    <h1>AdPulse Premium</h1>
+    <div class="info">Tasks Left: <span id="tasks">20</span></div>
+    <button id="earnBtn" class="earn-btn">WATCH AD & EARN</button>
+    <div class="timer" id="timer"></div>
+    <button id="videoBtn" class="video-btn">WATCH VIDEO</button>
+    <div class="notice" id="notice">⚠️ This section is UNDER CONSTRUCTION. Please return later!</div>
+  </div>
 
-    <div class="blink-notice">
-        NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS
-    </div>
+  <script>
+    const earnBtn = document.getElementById('earnBtn');
+    const timerDisplay = document.getElementById('timer');
+    const tasks = document.getElementById('tasks');
+    const videoBtn = document.getElementById('videoBtn');
+    const notice = document.getElementById('notice');
 
-    <div class="card">
-        <h2>AdPulse Income</h2>
-        <div class="info">
-            Tasks Left: <span id="taskCount">--</span><br>
-            <span id="timerText">Next task in: <span id="timerDisplay">0:00</span></span>
-        </div>
-        
-        <button id="adBtn" class="btn btn-main" onclick="startTask()">WATCH AD & EARN</button>
-        
-        <div style="border-top: 1px solid #30363d; margin-top: 25px; padding-top: 15px;">
-            <h3 style="color: var(--text-sub);">Video Tasks</h3>
-            <button class="btn btn-video" onclick="showConstruction()">WATCH VIDEO</button>
-        </div>
-    </div>
+    let cooldown = false;
 
-    <div id="overlay" onclick="this.style.display='none'">
-        <h1 style="color: #f1c40f;">🚧 NOTICE 🚧</h1>
-        <p>This section is UNDER CONSTRUCTION.</p>
-        <p style="color: #8b949e;">Please return on the 17th!</p>
-        <button class="modal-btn">BACK</button>
-    </div>
-
-    <script>
-        // --- CONFIGURATION ---
-        const COOLDOWN_MINUTES = 3; // Change this number to 4 if you want 4 minutes
-        const AD_URL = "YOUR_ADSTERRA_DIRECT_LINK_HERE";
-        
-        // Detect WiFi vs Data
-        const isWifi = navigator.connection ? navigator.connection.type === 'wifi' : false;
-        const LIMIT = isWifi ? 10 : 20;
-
-        function updateUI() {
-            let used = parseInt(localStorage.getItem('adsUsed') || 0);
-            let lastClick = parseInt(localStorage.getItem('lastClickTime') || 0);
-            let now = Date.now();
-            let diff = now - lastClick;
-            let cooldownMs = COOLDOWN_MINUTES * 60 * 1000;
-
-            document.getElementById('taskCount').innerText = (LIMIT - used);
-
-            if (diff < cooldownMs && used > 0) {
-                document.getElementById('adBtn').disabled = true;
-                startTimer(cooldownMs - diff);
-            } else {
-                document.getElementById('adBtn').disabled = false;
-                document.getElementById('timerText').style.display = 'none';
-            }
+    earnBtn.addEventListener('click', () => {
+      if (!cooldown) {
+        let remaining = parseInt(tasks.textContent);
+        if (remaining > 0) {
+          tasks.textContent = remaining - 1;
         }
+        cooldown = true;
+        earnBtn.disabled = true;
+        let timeLeft = 180; // 3 minutes in seconds
+        timerDisplay.textContent = `Next task available in ${timeLeft}s`;
 
-        function startTimer(duration) {
-            document.getElementById('timerText').style.display = 'block';
-            let display = document.getElementById('timerDisplay');
-            let timer = duration / 1000;
+        const interval = setInterval(() => {
+          timeLeft--;
+          timerDisplay.textContent = `Next task available in ${timeLeft}s`;
+          if (timeLeft <= 0) {
+            clearInterval(interval);
+            cooldown = false;
+            earnBtn.disabled = false;
+            timerDisplay.textContent = '';
+          }
+        }, 1000);
+      }
+    });
 
-            let interval = setInterval(() => {
-                let minutes = Math.floor(timer / 60);
-                let seconds = Math.floor(timer % 60);
-                display.innerText = minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
-
-                if (--timer < 0) {
-                    clearInterval(interval);
-                    updateUI();
-                }
-            }, 1000);
-        }
-
-        function startTask() {
-            let used = parseInt(localStorage.getItem('adsUsed') || 0);
-            let today = new Date().toDateString();
-
-            if (localStorage.getItem('lastDate') !== today) {
-                used = 0;
-                localStorage.setItem('lastDate', today);
-            }
-
-            if (used >= LIMIT) {
-                alert("Daily Limit Reached!");
-                return;
-            }
-
-            // Record click time and open ad
-            localStorage.setItem('lastClickTime', Date.now());
-            localStorage.setItem('adsUsed', used + 1);
-            window.open(AD_URL, "_blank");
-            updateUI();
-        }
-
-        function showConstruction() {
-            document.getElementById('overlay').style.display = 'flex';
-        }
-
-        window.onload = updateUI;
-    </script>
+    videoBtn.addEventListener('click', () => {
+      notice.style.display = 'block';
+    });
+  </script>
 </body>
 </html>
