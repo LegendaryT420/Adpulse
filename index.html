@@ -1,242 +1,231 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AdPulse Master - Production</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AdPulse Neon Edition</title>
 
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://adgrams.org/sdk/adgrams-sdk.js"></script>
-    <script src='//libtl.com/sdk.js' data-zone='10932641' data-sdk='show_10932641'></script>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src='//libtl.com/sdk.js' data-zone='10932641' data-sdk='show_10932641'></script>
 
 <style>
-        :root {
-            --neon-cyan: #00f3ff;
-            --neon-pink: #ff0077;
-            --bg-dark: #05070f;
-        }
+:root {
+    --neon-cyan:#00f3ff;
+    --neon-pink:#ff0077;
+    --bg-dark:#05070f;
+}
 
-        body {
-            margin:0; font-family: 'Segoe UI', sans-serif; color: white; overflow-x: hidden;
-            background: radial-gradient(circle at 30% 30%, #00f3ff22, transparent),
-                        radial-gradient(circle at 70% 70%, #ff007722, transparent),
-                        var(--bg-dark);
-            min-height: 100vh;
-        }
+body {
+    margin:0;
+    font-family:Segoe UI;
+    color:white;
+    overflow-x:hidden;
+    background:radial-gradient(circle at 30% 30%,#00f3ff22,transparent),
+               radial-gradient(circle at 70% 70%,#ff007722,transparent),
+               var(--bg-dark);
+    min-height:100vh;
+}
 
-        /* GEMINI MOVING LIGHT EFFECT */
-        body::before {
-            content:""; position:fixed; inset:0;
-            background:linear-gradient(120deg,#00f3ff33,#8a2eff33,#ff007733);
-            filter:blur(80px); animation:move 12s infinite linear; z-index:-1;
-        }
-        @keyframes move { 0%{transform:translateX(-20%)} 100%{transform:translateX(20%)} }
+body::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    background:linear-gradient(120deg,#00f3ff33,#8a2eff33,#ff007733);
+    filter:blur(80px);
+    animation:move 12s linear infinite;
+    z-index:-1;
+}
 
-        /* BLINKING WARNING */
-        .notice {
-            text-align:center; background:#990000; padding:14px; font-weight:bold; font-size: 13px;
-            animation: blink-bg 1.5s step-start infinite; border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-        @keyframes blink-bg { 50% { opacity: 0.7; background: #ff0000; } }
+@keyframes move{
+    0%{transform:translateX(-20%)}
+    100%{transform:translateX(20%)}
+}
 
-        /* NEON CARD */
-        .card {
-            margin:60px auto 20px auto; width:320px; padding:30px; border-radius:25px;
-            background:rgba(20,20,40,0.7); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
-            text-align:center; box-shadow:0 0 40px rgba(0, 243, 255, 0.3);
-            border: 1px solid rgba(0, 243, 255, 0.2); position: relative; z-index: 10;
-        }
+.notice{
+    text-align:center;
+    background:#990000;
+    padding:14px;
+    font-weight:bold;
+    font-size:13px;
+    animation:blink 1.5s infinite;
+}
 
-        .btn {
-            width:100%; padding:18px; margin-top:15px; border:none; border-radius:15px;
-            font-weight:bold; font-size: 16px; cursor:pointer; transition: 0.3s; text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        .btn-main { background:linear-gradient(135deg,#00f3ff,#008cff); box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); color: #000; }
-        .btn-video { background:linear-gradient(135deg,#ff7700,#ff0077); box-shadow: 0 0 15px rgba(255, 0, 119, 0.3); color: #fff; }
-        .btn:disabled { background: #222 !important; color: #555 !important; cursor: not-allowed; box-shadow: none !important; }
+@keyframes blink{
+    50%{opacity:0.6;background:#ff0000;}
+}
 
-        /* COMING SOON MODAL */
-        #customOverlay {
-            display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92);
-            z-index: 2000; align-items: center; justify-content: center; flex-direction: column;
-            backdrop-filter: blur(20px);
-        }
-        .modal-content {
-            text-align: center; padding: 40px; border: 2px solid var(--neon-pink);
-            border-radius: 30px; background: #0a0c16; box-shadow: 0 0 60px var(--neon-pink);
-        }
+.card{
+    margin:60px auto;
+    width:320px;
+    padding:30px;
+    border-radius:25px;
+    background:rgba(20,20,40,0.7);
+    backdrop-filter:blur(20px);
+    text-align:center;
+    box-shadow:0 0 40px #00f3ff55;
+}
 
-        /* WATERMARK */
-        .watermark {
-            text-align:center; font-size: 65px; font-weight: 900; opacity: 0.1;
-            margin-top: 30px; text-transform: uppercase; color: var(--neon-cyan);
-            text-shadow: 0 0 20px var(--neon-cyan); pointer-events: none; letter-spacing: 6px;
-        }
-    </style>
+.btn{
+    width:100%;
+    padding:18px;
+    margin-top:15px;
+    border:none;
+    border-radius:15px;
+    font-weight:bold;
+    cursor:pointer;
+}
+
+.btn-main{
+    background:linear-gradient(135deg,#00f3ff,#008cff);
+    color:black;
+}
+
+.btn-video{
+    background:linear-gradient(135deg,#ff7700,#ff0077);
+    color:white;
+}
+
+.btn:disabled{
+    background:#222;
+    color:#555;
+}
+
+.watermark{
+    text-align:center;
+    font-size:60px;
+    opacity:0.1;
+    margin-top:40px;
+}
+</style>
 </head>
 
 <body>
 
-<div class="notice" id="topNotice">---</div>
-
-<div id="customOverlay">
-    <div class="modal-content">
-        <h1 style="color:var(--neon-pink); text-shadow: 0 0 15px var(--neon-pink); margin-bottom: 5px;">STAY TUNED</h1>
-        <p style="font-weight:bold; opacity: 0.8; margin-bottom: 15px;">Section Unlocking</p>
-        <h2 style="color:var(--neon-cyan); text-shadow: 0 0 10px var(--neon-cyan); font-size: 40px; margin-bottom: 25px;">SOON!!</h2>
-        <button class="btn btn-main" style="width:auto; padding: 12px 50px;" onclick="closeModal()">BACK</button>
-    </div>
-</div>
+<div class="notice">NO VPN | MOBILE DATA RECOMMENDED</div>
 
 <div class="card">
-    <h2 id="displayBrandName" style="margin-bottom: 25px; letter-spacing: 2px;">---</h2>
-    
-    <div style="font-size: 15px; margin-bottom: 25px; opacity: 0.9;">
-        Tasks Remaining: <span id="taskCount" style="color:var(--neon-cyan); font-weight: 900;">0</span>
-    </div>
+    <h2 id="brand">AdPulse_NEON</h2>
 
-    <button id="adBtn" class="btn btn-main" onclick="showAdgramsAd()">WATCH AD</button>
-    <p id="statusText" style="margin-top:20px; font-weight:bold; min-height:22px; font-size: 14px;"></p>
+    <p>Coins: <span id="coins">0</span></p>
+    <p>Tasks Left: <span id="tasks">5</span></p>
 
-    <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 30px 0;"></div>
+    <button class="btn btn-main" id="taskBtn" onclick="startTask()">START TASK</button>
 
-    <h3 style="margin-bottom: 10px; opacity:0.6; font-size: 14px;">PREMIUM VIDEO TASKS</h3>
-    <button class="btn btn-video" onclick="openModal()">WATCH VIDEO</button>
+    <p id="status"></p>
+
+    <button class="btn btn-video" onclick="openVideo()">WATCH VIDEO TASK</button>
 </div>
 
-<div class="watermark" id="displayWatermark">---</div>
+<div class="watermark">AdPulse</div>
 
 <script>
-/* ========================================
-   MASTER CONTROL ROOM (FINAL SETTINGS)
-======================================== */
-const CONFIG = {
-    BRAND_NAME:    "AdPulse",          
-    ADGRAMS_ID:    "28806",
-    REWARD_VALUE:  0.10,
-    COOLDOWN_SEC:  300,
-    DAILY_LIMIT:   20,
-    NOTICE_TEXT:   "NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS"
-};
-
-/* ========================================
-   SYSTEM ENGINE (CORE LOGIC)
-======================================== */
 const tg = window.Telegram.WebApp;
 tg.expand();
-tg.ready();
 
-document.title = CONFIG.BRAND_NAME + " - Neon Edition";
-document.getElementById("displayBrandName").innerText = CONFIG.BRAND_NAME + "_NEON";
-document.getElementById("displayWatermark").innerText = CONFIG.BRAND_NAME;
-document.getElementById("topNotice").innerText = CONFIG.NOTICE_TEXT;
-
-let used = parseInt(localStorage.getItem("used") || 0);
+let coins = parseInt(localStorage.getItem("coins") || 0);
+let tasks = parseInt(localStorage.getItem("tasks") || 5);
+let last = 0;
 
 function updateUI(){
-    document.getElementById("taskCount").innerText = Math.max(0, CONFIG.DAILY_LIMIT - used);
-    
-    let lastClaim = parseInt(localStorage.getItem("lastClaim") || 0);
-    let diff = (Date.now() - lastClaim) / 1000;
-    
-    if (diff < CONFIG.COOLDOWN_SEC && used > 0) {
-        startCooldownTimer(Math.ceil(CONFIG.COOLDOWN_SEC - diff));
-    }
+    document.getElementById("coins").innerText = coins;
+    document.getElementById("tasks").innerText = tasks;
 }
+updateUI();
 
-/* ========================================
-   FIXED AD BUTTON
-======================================== */
-function waitForAdsgram(callback, retries = 10) {
-    if (window.Adsgram) {
-        callback();
-    } else if (retries > 0) {
-        setTimeout(() => waitForAdsgram(callback, retries - 1), 500);
-    } else {
-        alert("Adsgram failed to load. Try again later.");
-    }
-}
-
-function showAdgramsAd() {
-    let btn = document.getElementById("adBtn");
-
-    if (used >= CONFIG.DAILY_LIMIT) {
-        alert("Daily limit reached!");
+/* =========================
+   TASK SYSTEM (CORE)
+========================= */
+function startTask(){
+    if(tasks <= 0){
+        alert("No tasks left today");
         return;
     }
 
+    let btn = document.getElementById("taskBtn");
     btn.disabled = true;
 
-    // Monetag trigger
-    if (typeof show_10932641 === "function") {
-        try { show_10932641(); } catch(e) {}
+    document.getElementById("status").innerText = "Preparing reward...";
+
+    // anti-spam delay
+    setTimeout(() => {
+        let viewed = false;
+
+
+        showAd();
+
+    }, 3000);
+}
+
+/* =========================
+   MONETAG AD SYSTEM
+========================= */
+function showAd(){
+
+    if(typeof show_10932641 !== "function"){
+        alert("Ad not ready");
+        return;
     }
 
-    // Wait for Adsgram properly
-    waitForAdsgram(() => {
+    let startTime = Date.now();   // 👈 START tracking BEFORE ad
 
-        window.Adsgram.showAd({ blockId: CONFIG.ADGRAMS_ID })
-            .then((result) => {
-                if (result && result.done) {
+    show_10932641();              // 👈 Monetag ad trigger
 
-                    used++;
-                    localStorage.setItem("used", used);
-                    localStorage.setItem("lastClaim", Date.now());
+    setTimeout(() => {
 
-                    if (tg.sendData) {
-                        tg.sendData(JSON.stringify({
-                            action: "reward_user",
-                            amount: CONFIG.REWARD_VALUE
-                        }));
-                    }
+        let watchedTime = Date.now() - startTime;
 
-                    updateUI();
-                } else {
-                    alert("Complete the ad to earn.");
-                }
-            })
-            .catch(() => {
-                alert("Ad failed.");
-            })
-            .finally(() => {
-                btn.disabled = false;
-            });
+        // 🔥 REWARD SYSTEM GOES HERE
+        if(watchedTime > 4000){
 
-    });
-}
+            coins += 10;
+            tasks -= 1;
 
-/* ========================================
-   COOLDOWN SYSTEM
-======================================== */
-function startCooldownTimer(seconds) {
-    let btn = document.getElementById("adBtn");
-    let status = document.getElementById("statusText");
-    btn.disabled = true;
-    status.style.color = "var(--neon-pink)";
+            localStorage.setItem("coins", coins);
+            localStorage.setItem("tasks", tasks);
 
-    let countdown = setInterval(() => {
-        let m = Math.floor(seconds / 60);
-        let s = seconds % 60;
-        status.innerText = "Next Task: " + m + ":" + (s < 10 ? "0" : "") + s;
-        seconds--;
+            if(window.Telegram?.WebApp?.sendData){
+                Telegram.WebApp.sendData(JSON.stringify({
+                    coins: coins
+                }));
+            }
 
-        if(seconds < 0) {
-            clearInterval(countdown);
-            btn.disabled = false;
-            status.style.color = "var(--neon-cyan)";
-            status.innerText = "Task Ready!";
+            document.getElementById("status").innerText = "Reward +10 coins";
+            updateUI();
+
+        } else {
+            alert("Ad not properly viewed");
         }
-    }, 1000);
+
+    }, 6000); // wait window (important for Monetag)
+
+}
+        document.getElementById("status").innerText = "Reward Earned +10 coins";
+        document.getElementById("taskBtn").disabled = false;
+
+        updateUI();
+
+    }, 5000); // fake completion window
+
 }
 
-/* ========================================
-   MODAL
-======================================== */
-function openModal() { document.getElementById("customOverlay").style.display = "flex"; }
-function closeModal() { document.getElementById("customOverlay").style.display = "none"; }
+/* =========================
+   VIDEO TASK (extra engagement)
+========================= */
+function openVideo(){
+    alert("Video task coming soon");
+}
 
-window.onload = updateUI;
+/* =========================
+   DAILY RESET SYSTEM
+========================= */
+let today = new Date().toDateString();
+let saved = localStorage.getItem("day");
+
+if(saved !== today){
+    localStorage.setItem("day", today);
+    localStorage.setItem("tasks", 5);
+}
 </script>
 
+</body>
 </html>
