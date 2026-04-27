@@ -9,12 +9,6 @@
     <script src="https://adgrams.org/sdk/adgrams-sdk.js"></script>
     <script src='//libtl.com/sdk.js' data-zone='10932641' data-sdk='show_10932641'></script>
 
-   
- 
-        /* ========================================
-           MASTER CONTROL ROOM (STYLE)
-           ========================================
-        */
 <style>
         :root {
             --neon-cyan: #00f3ff;
@@ -116,26 +110,23 @@
 <script>
 /* ========================================
    MASTER CONTROL ROOM (FINAL SETTINGS)
-   ========================================
-*/
+======================================== */
 const CONFIG = {
     BRAND_NAME:    "AdPulse",          
-    ADGRAMS_ID:    "28806", // PASTE YOUR ID HERE
-    REWARD_VALUE:  0.10,                // Reward value sent to the bot
-    COOLDOWN_SEC:  300,                 // 5 Minutes (300 seconds)
-    DAILY_LIMIT:   20,                  
+    ADGRAMS_ID:    "28806",
+    REWARD_VALUE:  0.10,
+    COOLDOWN_SEC:  300,
+    DAILY_LIMIT:   20,
     NOTICE_TEXT:   "NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS"
 };
 
 /* ========================================
    SYSTEM ENGINE (CORE LOGIC)
-   ========================================
-*/
+======================================== */
 const tg = window.Telegram.WebApp;
 tg.expand();
 tg.ready();
 
-// Initializing UI from Control Room
 document.title = CONFIG.BRAND_NAME + " - Neon Edition";
 document.getElementById("displayBrandName").innerText = CONFIG.BRAND_NAME + "_NEON";
 document.getElementById("displayWatermark").innerText = CONFIG.BRAND_NAME;
@@ -154,46 +145,71 @@ function updateUI(){
     }
 }
 
+/* ========================================
+   FIXED AD BUTTON
+======================================== */
 function showAdgramsAd() {
-    if(used >= CONFIG.DAILY_LIMIT) {
+    let btn = document.getElementById("adBtn");
+
+    if (used >= CONFIG.DAILY_LIMIT) {
         alert("Daily limit reached! Come back tomorrow.");
         return;
     }
 
-    if (!window.Adgrams) {
-        alert("Network loading... Please wait 3 seconds.");
-        return;
+    btn.disabled = true;
+
+    // 👉 Monetag manual trigger (safe)
+    if (typeof show_10932641 === "function") {
+        try { show_10932641(); } catch(e) {}
     }
 
-    window.Adsgram.showAd({ blockId: CONFIG.ADGRAMS_ID })
-        .then((result) => {
-            if (result.completed) {
-                // SUCCESS: Record Task
-                used++;
-                localStorage.setItem("used", used);
-                localStorage.setItem("lastClaim", Date.now());
-                
-                // SEND DATA TO TELEGRAM BOT
-                const payload = {
-                    action: "reward_user",
-                    amount: CONFIG.REWARD_VALUE,
-                    timestamp: Date.now()
-                };
-                
-                if(tg.sendData) {
-                    tg.sendData(JSON.stringify(payload));
+    // 👉 Wait a bit to ensure Adsgram loads (important for Telegram)
+    setTimeout(() => {
+
+        if (!window.Adsgram) {
+            btn.disabled = false;
+            alert("Ads still loading... try again.");
+            return;
+        }
+
+        window.Adsgram.showAd({ blockId: CONFIG.ADGRAMS_ID })
+            .then((result) => {
+                if (result && result.done) {
+
+                    // SUCCESS
+                    used++;
+                    localStorage.setItem("used", used);
+                    localStorage.setItem("lastClaim", Date.now());
+
+                    const payload = {
+                        action: "reward_user",
+                        amount: CONFIG.REWARD_VALUE,
+                        timestamp: Date.now()
+                    };
+
+                    if (tg.sendData) {
+                        tg.sendData(JSON.stringify(payload));
+                    }
+
+                    updateUI();
+                } else {
+                    alert("You must complete the ad to earn.");
                 }
-                
-                updateUI();
-            } else {
-                alert("Task failed: You must finish the ad to earn.");
-            }
-        })
-        .catch((err) => {
-            alert("Error: Check your Adgrams Block ID or Connection.");
-        });
+            })
+            .catch(() => {
+                alert("Ad failed. Check connection or ID.");
+            })
+            .finally(() => {
+                btn.disabled = false;
+            });
+
+    }, 800); // slight delay improves load reliability
+
 }
 
+/* ========================================
+   COOLDOWN SYSTEM
+======================================== */
 function startCooldownTimer(seconds) {
     let btn = document.getElementById("adBtn");
     let status = document.getElementById("statusText");
@@ -215,12 +231,13 @@ function startCooldownTimer(seconds) {
     }, 1000);
 }
 
-// Modal System
+/* ========================================
+   MODAL
+======================================== */
 function openModal() { document.getElementById("customOverlay").style.display = "flex"; }
 function closeModal() { document.getElementById("customOverlay").style.display = "none"; }
 
 window.onload = updateUI;
 </script>
 
-</body>
 </html>
