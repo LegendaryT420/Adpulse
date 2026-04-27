@@ -9,9 +9,7 @@
     <script src="https://adgrams.org/sdk/adgrams-sdk.js"></script>
     <script src='//libtl.com/sdk.js' data-zone='10932641' data-sdk='show_10932641'></script>
 
-    <script>
-  const AdController = window.Adsgram.init({ blockId: "28806" });
-</script>
+   
  
         /* ========================================
            MASTER CONTROL ROOM (STYLE)
@@ -122,7 +120,7 @@
 */
 const CONFIG = {
     BRAND_NAME:    "AdPulse",          
-    ADGRAMS_ID:    "YOUR_ADGRAMS_BLOCK_ID", // PASTE YOUR ID HERE
+    ADGRAMS_ID:    "28806", // PASTE YOUR ID HERE
     REWARD_VALUE:  0.10,                // Reward value sent to the bot
     COOLDOWN_SEC:  300,                 // 5 Minutes (300 seconds)
     DAILY_LIMIT:   20,                  
@@ -167,7 +165,7 @@ function showAdgramsAd() {
         return;
     }
 
-    window.Adgrams.showAd(CONFIG.ADGRAMS_ID)
+    window.Adsgram.showAd({ blockId: CONFIG.ADGRAMS_ID })
         .then((result) => {
             if (result.completed) {
                 // SUCCESS: Record Task
