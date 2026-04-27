@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AdPulse Neon - Validated</title>
+<title>AdPulse</title>
 
 <style>
 :root {
@@ -105,7 +105,7 @@ NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS
 </div>
 
 <div class="card">
-<h2>AdPulse_NEON</h2>
+<h2>AdPulse</h2>
 
 <div style="font-size: 14px; margin-bottom: 20px;">
 Tasks: <span id="taskCount" style="color:var(--neon-cyan);">0</span> | 
@@ -125,10 +125,10 @@ Balance: <span class="balance" id="balance">$0.00</span>
 <div class="watermark">AdPulse</div>
 
 <script>
-const AD_URL = "PASTE_YOUR_LINK_HERE"; 
-const REWARD = 0.05; 
-const VERIFY_TIME = 30; // Seconds they MUST wait to ensure impression
-const COOLDOWN_TIME = 480; // 8 minutes lockout
+const AD_URL = https://gemini.google.com/; 
+const REWARD = 0.10; 
+const VERIFY_TIME = 10; // Seconds they MUST wait to ensure impression
+const COOLDOWN_TIME = 300; // 5 minutes lockout
 
 const isWifi = navigator.connection && navigator.connection.type === "wifi";
 const LIMIT = isWifi ? 10 : 20;
@@ -152,7 +152,7 @@ function updateUI(){
 function openAd(){
     if(used >= LIMIT) return alert("Daily limit reached!");
 
-    window.open(AD_URL, "_blank");
+    window.open(https://gemini.google.com/, "_blank");
     
     // Hide Watch button, show countdown
     document.getElementById("adBtn").style.display = "none";
