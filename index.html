@@ -1,78 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AdPulse Control Center</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AdPulse Master - Production</title>
 
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://adgrams.org/sdk/adgrams-sdk.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://adgrams.org/sdk/adgrams-sdk.js"></script>
 
-<style>
-/* ========================================
-   CONTROL ROOM (STYLE)
-   ========================================
-*/
-:root {
-    --neon-cyan: #00f3ff;
-    --neon-pink: #ff0077;
-    --bg-dark: #05070f;
-}
+    <style>
+        /* ========================================
+           MASTER CONTROL ROOM (STYLE)
+           ========================================
+        */
+        :root {
+            --neon-cyan: #00f3ff;
+            --neon-pink: #ff0077;
+            --bg-dark: #05070f;
+        }
 
-body {
-    margin:0; font-family: sans-serif; color: white; overflow-x: hidden;
-    background: radial-gradient(circle at 30% 30%, #00f3ff22, transparent),
-                radial-gradient(circle at 70% 70%, #ff007722, transparent),
-                var(--bg-dark);
-    min-height: 100vh;
-}
+        body {
+            margin:0; font-family: 'Segoe UI', sans-serif; color: white; overflow-x: hidden;
+            background: radial-gradient(circle at 30% 30%, #00f3ff22, transparent),
+                        radial-gradient(circle at 70% 70%, #ff007722, transparent),
+                        var(--bg-dark);
+            min-height: 100vh;
+        }
 
-body::before {
-    content:""; position:fixed; inset:0;
-    background:linear-gradient(120deg,#00f3ff33,#8a2eff33,#ff007733);
-    filter:blur(80px); animation:move 12s infinite linear; z-index:-1;
-}
-@keyframes move { 0%{transform:translateX(-20%)} 100%{transform:translateX(20%)} }
+        /* GEMINI MOVING LIGHT EFFECT */
+        body::before {
+            content:""; position:fixed; inset:0;
+            background:linear-gradient(120deg,#00f3ff33,#8a2eff33,#ff007733);
+            filter:blur(80px); animation:move 12s infinite linear; z-index:-1;
+        }
+        @keyframes move { 0%{transform:translateX(-20%)} 100%{transform:translateX(20%)} }
 
-.notice {
-    text-align:center; background:#990000; padding:12px; font-weight:bold; font-size: 13px;
-    animation: blink-bg 1.5s step-start infinite;
-}
-@keyframes blink-bg { 50% { opacity: 0.7; background: #ff0000; } }
+        /* BLINKING WARNING */
+        .notice {
+            text-align:center; background:#990000; padding:14px; font-weight:bold; font-size: 13px;
+            animation: blink-bg 1.5s step-start infinite; border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        @keyframes blink-bg { 50% { opacity: 0.7; background: #ff0000; } }
 
-.card {
-    margin:60px auto 20px auto; width:320px; padding:25px; border-radius:20px;
-    background:rgba(20,20,40,0.6); backdrop-filter:blur(20px);
-    -webkit-backdrop-filter:blur(20px); text-align:center;
-    box-shadow:0 0 30px #00f3ff55; border: 1px solid rgba(0, 243, 255, 0.2);
-    position: relative; z-index: 10;
-}
+        /* NEON CARD */
+        .card {
+            margin:60px auto 20px auto; width:320px; padding:30px; border-radius:25px;
+            background:rgba(20,20,40,0.7); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+            text-align:center; box-shadow:0 0 40px rgba(0, 243, 255, 0.3);
+            border: 1px solid rgba(0, 243, 255, 0.2); position: relative; z-index: 10;
+        }
 
-.btn {
-    width:100%; padding:18px; margin-top:15px; border:none; border-radius:12px;
-    font-weight:bold; font-size: 16px; cursor:pointer; transition: 0.3s; text-transform: uppercase;
-}
-.btn-main { background:linear-gradient(135deg,#00f3ff,#008cff); box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); }
-.btn-video { background:linear-gradient(135deg,#ff7700,#ff0077); box-shadow: 0 0 15px rgba(255, 0, 119, 0.3); }
-.btn:disabled { background: #333 !important; color: #777; cursor: not-allowed; box-shadow: none; }
+        .btn {
+            width:100%; padding:18px; margin-top:15px; border:none; border-radius:15px;
+            font-weight:bold; font-size: 16px; cursor:pointer; transition: 0.3s; text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn-main { background:linear-gradient(135deg,#00f3ff,#008cff); box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); color: #000; }
+        .btn-video { background:linear-gradient(135deg,#ff7700,#ff0077); box-shadow: 0 0 15px rgba(255, 0, 119, 0.3); color: #fff; }
+        .btn:disabled { background: #222 !important; color: #555 !important; cursor: not-allowed; box-shadow: none !important; }
 
-/* CUSTOM MODAL OVERLAY (The "Blank Page" Prompt) */
-#customOverlay {
-    display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.9);
-    z-index: 2000; align-items: center; justify-content: center; flex-direction: column;
-    backdrop-filter: blur(15px);
-}
-.modal-content {
-    text-align: center; padding: 40px; border: 2px solid var(--neon-pink);
-    border-radius: 30px; background: #0a0c16; box-shadow: 0 0 50px var(--neon-pink);
-}
+        /* COMING SOON MODAL */
+        #customOverlay {
+            display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92);
+            z-index: 2000; align-items: center; justify-content: center; flex-direction: column;
+            backdrop-filter: blur(20px);
+        }
+        .modal-content {
+            text-align: center; padding: 40px; border: 2px solid var(--neon-pink);
+            border-radius: 30px; background: #0a0c16; box-shadow: 0 0 60px var(--neon-pink);
+        }
 
-.watermark {
-    text-align:center; font-size: 60px; font-weight: 900; opacity: 0.12;
-    margin-top: 20px; text-transform: uppercase; color: var(--neon-cyan);
-    text-shadow: 0 0 20px var(--neon-cyan); pointer-events: none; letter-spacing: 4px;
-}
-</style>
+        /* WATERMARK */
+        .watermark {
+            text-align:center; font-size: 65px; font-weight: 900; opacity: 0.1;
+            margin-top: 30px; text-transform: uppercase; color: var(--neon-cyan);
+            text-shadow: 0 0 20px var(--neon-cyan); pointer-events: none; letter-spacing: 6px;
+        }
+    </style>
 </head>
 
 <body>
@@ -81,23 +85,26 @@ body::before {
 
 <div id="customOverlay">
     <div class="modal-content">
-        <h1 style="color:var(--neon-pink); text-shadow: 0 0 15px var(--neon-pink);">STAY TUNED</h1>
-        <p style="font-weight:bold; letter-spacing:1px;">This section is unlocking</p>
-        <h2 style="color:var(--neon-cyan); text-shadow: 0 0 10px var(--neon-cyan);">SOON!!</h2>
-        <button class="btn btn-main" style="width:auto; padding: 10px 40px;" onclick="closeModal()">BACK</button>
+        <h1 style="color:var(--neon-pink); text-shadow: 0 0 15px var(--neon-pink); margin-bottom: 5px;">STAY TUNED</h1>
+        <p style="font-weight:bold; opacity: 0.8; margin-bottom: 15px;">Section Unlocking</p>
+        <h2 style="color:var(--neon-cyan); text-shadow: 0 0 10px var(--neon-cyan); font-size: 40px; margin-bottom: 25px;">SOON!!</h2>
+        <button class="btn btn-main" style="width:auto; padding: 12px 50px;" onclick="closeModal()">BACK</button>
     </div>
 </div>
 
 <div class="card">
-    <h2 id="displayBrandName">---</h2>
-    <div style="font-size: 14px; margin-bottom: 20px;">
-        Tasks Remaining: <span id="taskCount" style="color:var(--neon-cyan);">0</span>
+    <h2 id="displayBrandName" style="margin-bottom: 25px; letter-spacing: 2px;">---</h2>
+    
+    <div style="font-size: 15px; margin-bottom: 25px; opacity: 0.9;">
+        Tasks Remaining: <span id="taskCount" style="color:var(--neon-cyan); font-weight: 900;">0</span>
     </div>
 
     <button id="adBtn" class="btn btn-main" onclick="showAdgramsAd()">WATCH AD</button>
-    <p id="statusText" style="margin-top:15px; font-weight:bold; min-height:20px;"></p>
+    <p id="statusText" style="margin-top:20px; font-weight:bold; min-height:22px; font-size: 14px;"></p>
 
-    <h3 style="margin-top:30px; opacity:0.7;">Video Tasks</h3>
+    <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 30px 0;"></div>
+
+    <h3 style="margin-bottom: 10px; opacity:0.6; font-size: 14px;">PREMIUM VIDEO TASKS</h3>
     <button class="btn btn-video" onclick="openModal()">WATCH VIDEO</button>
 </div>
 
@@ -105,26 +112,28 @@ body::before {
 
 <script>
 /* ========================================
-   MASTER CONTROL ROOM (EDIT HERE)
+   MASTER CONTROL ROOM (FINAL SETTINGS)
    ========================================
 */
 const CONFIG = {
     BRAND_NAME:    "AdPulse",          
-    ADGRAMS_ID:    "YOUR_ADGRAMS_BLOCK_ID", 
-    REWARD_AMOUNT: 0.10,               
-    COOLDOWN_SEC:  300,                
-    DAILY_LIMIT:   20,                 
+    ADGRAMS_ID:    "YOUR_ADGRAMS_BLOCK_ID", // PASTE YOUR ID HERE
+    REWARD_VALUE:  0.10,                // Reward value sent to the bot
+    COOLDOWN_SEC:  300,                 // 5 Minutes (300 seconds)
+    DAILY_LIMIT:   20,                  
     NOTICE_TEXT:   "NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS"
 };
 
 /* ========================================
-   SYSTEM ENGINE
+   SYSTEM ENGINE (CORE LOGIC)
    ========================================
 */
 const tg = window.Telegram.WebApp;
 tg.expand();
+tg.ready();
 
-document.title = CONFIG.BRAND_NAME;
+// Initializing UI from Control Room
+document.title = CONFIG.BRAND_NAME + " - Neon Edition";
 document.getElementById("displayBrandName").innerText = CONFIG.BRAND_NAME + "_NEON";
 document.getElementById("displayWatermark").innerText = CONFIG.BRAND_NAME;
 document.getElementById("topNotice").innerText = CONFIG.NOTICE_TEXT;
@@ -133,6 +142,7 @@ let used = parseInt(localStorage.getItem("used") || 0);
 
 function updateUI(){
     document.getElementById("taskCount").innerText = Math.max(0, CONFIG.DAILY_LIMIT - used);
+    
     let lastClaim = parseInt(localStorage.getItem("lastClaim") || 0);
     let diff = (Date.now() - lastClaim) / 1000;
     
@@ -142,26 +152,42 @@ function updateUI(){
 }
 
 function showAdgramsAd() {
-    if(used >= CONFIG.DAILY_LIMIT) return alert("Daily limit reached!");
+    if(used >= CONFIG.DAILY_LIMIT) {
+        alert("Daily limit reached! Come back tomorrow.");
+        return;
+    }
+
+    if (!window.Adgrams) {
+        alert("Network loading... Please wait 3 seconds.");
+        return;
+    }
 
     window.Adgrams.showAd(CONFIG.ADGRAMS_ID)
         .then((result) => {
             if (result.completed) {
+                // SUCCESS: Record Task
                 used++;
                 localStorage.setItem("used", used);
                 localStorage.setItem("lastClaim", Date.now());
                 
-                const rewardData = {
-                    status: "success",
-                    reward: CONFIG.REWARD_AMOUNT,
-                    task_type: "adgrams_view"
+                // SEND DATA TO TELEGRAM BOT
+                const payload = {
+                    action: "reward_user",
+                    amount: CONFIG.REWARD_VALUE,
+                    timestamp: Date.now()
                 };
-                tg.sendData(JSON.stringify(rewardData)); 
+                
+                if(tg.sendData) {
+                    tg.sendData(JSON.stringify(payload));
+                }
+                
                 updateUI();
+            } else {
+                alert("Task failed: You must finish the ad to earn.");
             }
         })
         .catch((err) => {
-            console.log("Adgrams error");
+            alert("Error: Check your Adgrams Block ID or Connection.");
         });
 }
 
@@ -171,24 +197,27 @@ function startCooldownTimer(seconds) {
     btn.disabled = true;
     status.style.color = "var(--neon-pink)";
 
-    let interval = setInterval(() => {
+    let countdown = setInterval(() => {
         let m = Math.floor(seconds / 60);
         let s = seconds % 60;
         status.innerText = "Next Task: " + m + ":" + (s < 10 ? "0" : "") + s;
         seconds--;
+
         if(seconds < 0) {
-            clearInterval(interval);
+            clearInterval(countdown);
             btn.disabled = false;
-            status.innerText = "Ready!";
+            status.style.color = "var(--neon-cyan)";
+            status.innerText = "Task Ready!";
         }
     }, 1000);
 }
 
-// Modal Functions
+// Modal System
 function openModal() { document.getElementById("customOverlay").style.display = "flex"; }
 function closeModal() { document.getElementById("customOverlay").style.display = "none"; }
 
 window.onload = updateUI;
 </script>
+
 </body>
 </html>
