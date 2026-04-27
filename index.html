@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ad Click Free Income</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; background: #f4f7f6; margin: 0; padding-top: 80px; }
+        
+        /* Blinking Red Notice */
+        .blink-notice {
+            position: fixed; top: 0; width: 100%; background: #ff0000; color: white;
+            padding: 15px 0; font-weight: bold; z-index: 1000;
+            animation: blinker 1.5s linear infinite;
+        }
+        @keyframes blinker { 50% { opacity: 0.2; } }
+
+        .card { background: white; width: 85%; max-width: 380px; margin: 20px auto; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { color: #2c3e50; margin-top: 0; }
+        
+        .btn { width: 100%; padding: 15px; font-size: 18px; border-radius: 10px; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .btn-main { background: #27ae60; color: white; }
+        .btn-main:disabled { background: #95a5a6; cursor: not-allowed; }
+        .btn-video { background: #e67e22; color: white; margin-top: 15px; }
+
+        .info { margin: 15px 0; font-size: 14px; color: #7f8c8d; }
+        #timerDisplay { color: #e74c3c; font-weight: bold; }
+
+        /* Construction Overlay */
+        #overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 2000; color: white;
+            align-items: center; justify-content: center; flex-direction: column;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="blink-notice">
+        NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS
+    </div>
+
+    <div class="card">
+        <h2>Ad Click Income</h2>
+        <div class="info">
+            Tasks Left: <span id="taskCount">--</span><br>
+            <span id="timerText">Next task available in: <span id="timerDisplay">0:00</span></span>
+        </div>
+        
+        <button id="adBtn" class="btn btn-main" onclick="startTask()">WATCH AD</button>
+        
+        <div style="border-top: 1px solid #eee; margin-top: 20px; padding-top: 15px;">
+            <h3>Video Tasks</h3>
+            <button class="btn btn-video" onclick="showConstruction()">WATCH VIDEO</button>
+        </div>
+    </div>
+
+    <div id="overlay" onclick="this.style.display='none'">
+        <h1 style="color: #f1c40f;">🚧 NOTICE 🚧</h1>
+        <p>This section is UNDER CONSTRUCTION.</p>
+        <p>Check back on the 17th!</p>
+        <button style="padding: 10px 20px;">BACK</button>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const COOLDOWN_MINUTES = 3; // Change this number to 4 if you want 4 minutes
+        const AD_URL = "YOUR_ADSTERRA_DIRECT_LINK_HERE";
+        
+        // Detect WiFi vs Data (Experimental browser support)
+        const isWifi = navigator.connection ? navigator.connection.type === 'wifi' : false;
+        const LIMIT = isWifi ? 10 : 20;
+
+        function updateUI() {
+            let used = parseInt(localStorage.getItem('adsUsed') || 0);
+            let lastClick = parseInt(localStorage.getItem('lastClickTime') || 0);
+            let now = Date.now();
+            let diff = now - lastClick;
+            let cooldownMs = COOLDOWN_MINUTES * 60 * 1000;
+
+            document.getElementById('taskCount').innerText = (LIMIT - used);
+
+            if (diff < cooldownMs && used > 0) {
+                document.getElementById('adBtn').disabled = true;
+                startTimer(cooldownMs - diff);
+            } else {
+                document.getElementById('adBtn').disabled = false;
+                document.getElementById('timerText').style.display = 'none';
+            }
+        }
+
+        function startTimer(duration) {
+            document.getElementById('timerText').style.display = 'block';
+            let display = document.getElementById('timerDisplay');
+            let timer = duration / 1000;
+
+            let interval = setInterval(() => {
+                let minutes = Math.floor(timer / 60);
+                let seconds = Math.floor(timer % 60);
+                display.innerText = minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+
+                if (--timer < 0) {
+                    clearInterval(interval);
+                    updateUI();
+                }
+            }, 1000);
+        }
+
+        function startTask() {
+            let used = parseInt(localStorage.getItem('adsUsed') || 0);
+            let today = new Date().toDateString();
+
+            if (localStorage.getItem('lastDate') !== today) {
+                used = 0;
+                localStorage.setItem('lastDate', today);
+            }
+
+            if (used >= LIMIT) {
+                alert("Daily Limit Reached!");
+                return;
+            }
+
+            // Record click time and open ad
+            localStorage.setItem('lastClickTime', Date.now());
+            localStorage.setItem('adsUsed', used + 1);
+            window.open(AD_URL, "_blank");
+            updateUI();
+        }
+
+        function showConstruction() {
+            document.getElementById('overlay').style.display = 'flex';
+        }
+
+        window.onload = updateUI;
+    </script>
+</body>
+</html>
