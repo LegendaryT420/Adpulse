@@ -148,63 +148,62 @@ function updateUI(){
 /* ========================================
    FIXED AD BUTTON
 ======================================== */
+function waitForAdsgram(callback, retries = 10) {
+    if (window.Adsgram) {
+        callback();
+    } else if (retries > 0) {
+        setTimeout(() => waitForAdsgram(callback, retries - 1), 500);
+    } else {
+        alert("Adsgram failed to load. Try again later.");
+    }
+}
+
 function showAdgramsAd() {
     let btn = document.getElementById("adBtn");
 
     if (used >= CONFIG.DAILY_LIMIT) {
-        alert("Daily limit reached! Come back tomorrow.");
+        alert("Daily limit reached!");
         return;
     }
 
     btn.disabled = true;
 
-    // 👉 Monetag manual trigger (safe)
+    // Monetag trigger
     if (typeof show_10932641 === "function") {
         try { show_10932641(); } catch(e) {}
     }
 
-    // 👉 Wait a bit to ensure Adsgram loads (important for Telegram)
-    setTimeout(() => {
-
-        if (!window.Adsgram) {
-            btn.disabled = false;
-            alert("Ads still loading... try again.");
-            return;
-        }
+    // Wait for Adsgram properly
+    waitForAdsgram(() => {
 
         window.Adsgram.showAd({ blockId: CONFIG.ADGRAMS_ID })
             .then((result) => {
                 if (result && result.done) {
 
-                    // SUCCESS
                     used++;
                     localStorage.setItem("used", used);
                     localStorage.setItem("lastClaim", Date.now());
 
-                    const payload = {
-                        action: "reward_user",
-                        amount: CONFIG.REWARD_VALUE,
-                        timestamp: Date.now()
-                    };
-
                     if (tg.sendData) {
-                        tg.sendData(JSON.stringify(payload));
+                        tg.sendData(JSON.stringify({
+                            action: "reward_user",
+                            amount: CONFIG.REWARD_VALUE
+                        }));
                     }
 
                     updateUI();
                 } else {
-                    alert("You must complete the ad to earn.");
+                    alert("Complete the ad to earn.");
                 }
             })
             .catch(() => {
-                alert("Ad failed. Check connection or ID.");
+                alert("Ad failed.");
             })
             .finally(() => {
                 btn.disabled = false;
             });
 
-    }, 800); // slight delay improves load reliability
-
+    });
 }
 
 /* ========================================
