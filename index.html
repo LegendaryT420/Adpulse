@@ -1,313 +1,213 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ad Click  - NEON EDITION</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        /* --- NEON GLOW THEME WITH SHIMMER --- */
-        :root {
-            /* Background: Deep Blue-Purple Gradient */
-            --bg-grad-start: #060814;
-            --bg-grad-end: #190a2a;
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AdPulse Neon - Validated</title>
 
-            /* Card: Semi-Transparent with Cyan Border */
-            --card-bg: rgba(20, 24, 45, 0.7);
-            --neon-border: #00f3ff;
-            --card-shadow: 0 8px 40px rgba(0, 243, 255, 0.3);
+<style>
+:root {
+    --neon-cyan:#00f3ff;
+    --neon-pink:#ff0077;
+}
 
-            /* Main Button: Green-Blue Neon */
-            --btn-main-start: #3fb950;
-            --btn-main-end: #00e6ff;
-            --btn-main-glow: #3fb950;
+body {
+    margin:0;
+    font-family:sans-serif;
+    color:white;
+    overflow-x:hidden;
+    background: radial-gradient(circle at 30% 30%, #00f3ff22, transparent),
+                radial-gradient(circle at 70% 70%, #ff007722, transparent),
+                #05070f;
+    min-height: 100vh;
+}
 
-            /* Video Button: Orange Neon */
-            --btn-video-start: #ff7700;
-            --btn-video-end: #ff0055;
-            --btn-video-glow: #ff7700;
+/* GEMINI STYLE MOVING LIGHT */
+body::before {
+    content:"";
+    position:fixed;
+    inset:0;
+    background:linear-gradient(120deg,#00f3ff33,#8a2eff33,#ff007733);
+    filter:blur(80px);
+    animation:move 12s infinite linear;
+    z-index:-1;
+}
+@keyframes move {
+    0%{transform:translateX(-20%)}
+    100%{transform:translateX(20%)}
+}
 
-            /* Text & Accents */
-            --text-main: #f0f6fc;
-            --text-neon-cyan: #00f3ff;
-            --text-neon-red: #ff3c00;
-            
-            /* Watermark: Extremely subtle ghost cyan/purple */
-            --watermark-glow: rgba(0, 243, 255, 0.08);
-        }
+.notice {
+    text-align:center;
+    background:#990000;
+    padding:12px;
+    font-weight:bold;
+    font-size: 13px;
+}
 
-        body {
-            font-family: 'Segoe UI', Tahoma, sans-serif;
-            text-align: center;
-            background: linear-gradient(135deg, var(--bg-grad-start), var(--bg-grad-end));
-            color: var(--text-main);
-            margin: 0;
-            padding-top: 80px;
-            min-height: 100vh;
-            /* Background texture overlay */
-            background-image: radial-gradient(rgba(100, 100, 100, 0.05) 1px, transparent 1px);
-            background-size: 20px 20px;
-            position: relative;
-            overflow-x: hidden; /* Prevents text shadow from causing scrollbars */
-        }
-        
-        /* --- PROFESSIONAL WATERMARK BACKGROUND --- */
-        .background-watermark {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: -2; /* Deepest level, below the card pane */
-            font-size: 15vw; /* Adjusts to screen size */
-            font-weight: 900;
-            letter-spacing: -0.05em;
-            text-transform: uppercase;
-            
-            /* Transparent Ghost Gradient */
-            background: linear-gradient(
-                90deg, 
-                rgba(255, 255, 255, 0.03) 0%, 
-                rgba(0, 243, 255, 0.06) 50%, 
-                rgba(255, 255, 255, 0.03) 100%
-            );
-            background-size: 200% auto;
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            
-            /* Subtle Shimmer Animation (Slow Scan) */
-            animation: slowShimmer 6s linear infinite;
-            
-            /* Soft Neon Ghost Halo */
-            filter: drop-shadow(0 0 10px rgba(0, 243, 255, 0.15));
-            opacity: 0.8;
-        }
+.card {
+    margin:60px auto 20px auto;
+    width:320px;
+    padding:25px;
+    border-radius:20px;
+    background:rgba(20,20,40,0.6);
+    backdrop-filter:blur(20px);
+    -webkit-backdrop-filter:blur(20px);
+    text-align:center;
+    box-shadow:0 0 30px #00f3ff55;
+    border: 1px solid rgba(0, 243, 255, 0.2);
+    position: relative;
+    z-index: 10;
+}
 
-        @keyframes slowShimmer {
-            0% { background-position: 200% center; }
-            100% { background-position: 0% center; }
-        }
+.balance { color:var(--neon-cyan); text-shadow:0 0 10px var(--neon-cyan); font-weight: bold; }
 
-        /* --- BLINK NOTICE (STAYS SAME) --- */
-        .blink-notice {
-            position: fixed; top: 0; width: 100%; background: #990000; color: white;
-            padding: 15px 0; font-weight: bold; z-index: 1000; font-size: 13px;
-            animation: blinker 1.5s linear infinite;
-            border-bottom: 2px solid var(--text-neon-red);
-            box-shadow: 0 4px 15px rgba(255, 60, 0, 0.4);
-        }
-        @keyframes blinker { 50% { opacity: 0.3; } }
+.btn {
+    width:100%;
+    padding:18px;
+    margin-top:15px;
+    border:none;
+    border-radius:12px;
+    font-weight:bold;
+    font-size: 16px;
+    cursor:pointer;
+    transition: 0.3s;
+    text-transform: uppercase;
+}
 
-        /* --- CARD PANE (TRANSPARENT NEON cyan border) --- */
-        .card { 
-            background: var(--card-bg); width: 85%; max-width: 380px; margin: 20px auto; 
-            padding: 25px; border-radius: 20px;
-            box-shadow: var(--card-shadow);
-            border: 2px solid var(--neon-border);
-            /* Soft blur on background */
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            position: relative;
-            z-index: 1; /* Floats above the watermark */
-        }
-        h2 {
-            color: var(--text-main);
-            margin-top: 0;
-            font-weight: 800;
-            text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
-        }
-        
-        /* --- CONTINUOUS NEON GLOW TEXT --- */
-        #taskCount {
-            color: var(--text-neon-cyan);
-            font-weight: bold;
-            text-shadow: 0 0 10px rgba(0, 243, 255, 0.7);
-        }
-        #timerDisplay {
-            color: var(--text-neon-red);
-            font-weight: bold;
-            text-shadow: 0 0 10px rgba(255, 60, 0, 0.7);
-        }
+.btn-main { background:linear-gradient(135deg,#00f3ff,#008cff); box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); }
+.btn-claim { background:linear-gradient(135deg,#3fb950,#00ff55); box-shadow: 0 0 20px rgba(63, 185, 80, 0.6); }
 
-        /* --- NEON BUTTONS --- */
-        .btn { 
-            width: 100%; padding: 18px; font-size: 18px; border-radius: 15px;
-            cursor: pointer; font-weight: bold; transition: 0.4s; text-transform: uppercase;
-            box-sizing: border-box;
-            border: none;
-            position: relative;
-        }
+.btn:disabled { background: #333 !important; color: #777; cursor: not-allowed; box-shadow: none; }
 
-        /* Continuous Pulse Glow Animation */
-        @keyframes pulseGlowMain {
-            0% { box-shadow: 0 0 10px var(--btn-main-glow); }
-            50% { box-shadow: 0 0 25px var(--btn-main-glow), 0 0 40px rgba(63, 185, 80, 0.4); }
-            100% { box-shadow: 0 0 10px var(--btn-main-glow); }
-        }
+#statusText { margin-top: 15px; font-weight: bold; min-height: 20px; }
+.timer-red { color: var(--neon-pink); }
+.verify-blue { color: var(--neon-cyan); }
 
-        @keyframes pulseGlowVideo {
-            0% { box-shadow: 0 0 10px var(--btn-video-glow); }
-            50% { box-shadow: 0 0 25px var(--btn-video-glow), 0 0 40px rgba(255, 119, 0, 0.4); }
-            100% { box-shadow: 0 0 10px var(--btn-video-glow); }
-        }
-
-        .btn-main { 
-            background: linear-gradient(135deg, var(--btn-main-start), var(--btn-main-end));
-            color: white; 
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            z-index: 1;
-        }
-
-        /* Neon Border Outline on Button */
-        .btn-main::after {
-            content: ''; position: absolute; top: -4px; left: -4px; right: -4px; bottom: -4px;
-            border: 2px solid #00ff55; border-radius: 19px;
-            filter: blur(1px);
-            z-index: -1;
-            opacity: 0.7;
-        }
-
-        .btn-main:active { transform: scale(0.97); }
-        .btn-main:disabled { 
-            background: #2a3b2a; cursor: not-allowed; 
-            box-shadow: none; color: #555;
-            border-color: #30363d;
-        }
-        .btn-main:disabled::after { border: none; opacity: 0; }
-
-        /* Apply Neon Animation only when enabled */
-        #adBtn:not(:disabled) { animation: pulseGlowMain 2s infinite; }
-
-        .btn-video { 
-            background: linear-gradient(135deg, var(--btn-video-start), var(--btn-video-end));
-            color: white; margin-top: 15px; 
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            z-index: 1;
-        }
-        .btn-video:active { background: #b04900; }
-        .btn-video:not(:disabled) { animation: pulseGlowVideo 2s infinite; }
-
-        /* Neon Border Outline on Video Button */
-        .btn-video::after {
-            content: ''; position: absolute; top: -4px; left: -4px; right: -4px; bottom: -4px;
-            border: 2px solid #ff0055; border-radius: 19px;
-            filter: blur(1px);
-            z-index: -1;
-            opacity: 0.7;
-        }
-
-        .info { margin: 15px 0; font-size: 14px; color: var(--text-main); font-weight: bold; }
-
-        /* Construction Overlay (Updated for Neon Dark Theme) */
-        #overlay {
-            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.98); z-index: 2000; color: #f0f6fc;
-            align-items: center; justify-content: center; flex-direction: column;
-            backdrop-filter: blur(20px);
-        }
-        .modal-btn { background: #30363d; color: white; border: 1px solid #555; padding: 10px 30px; border-radius: 5px; margin-top: 20px; font-weight: bold; text-shadow: none; box-shadow: none; }
-    </style>
+.watermark {
+    text-align:center;
+    font-size: 60px;
+    font-weight: 900;
+    opacity: 0.15;
+    margin-top: 20px;
+    text-transform: uppercase;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 20px var(--neon-cyan);
+    pointer-events: none;
+}
+</style>
 </head>
+
 <body>
 
-    <div class="background-watermark">AdPulse</div>
+<div class="notice">
+NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS
+</div>
 
-    <div class="blink-notice">
-        NO VPN | MOBILE DATA RECOMMENDED | NO MULTIPLE ACCOUNTS
-    </div>
+<div class="card">
+<h2>AdPulse_NEON</h2>
 
-    <div class="card">
-        <h2>AdPulse Income</h2>
-        <div class="info">
-            Tasks Left: <span id="taskCount">--</span><br>
-            <span id="timerText">Next task in: <span id="timerDisplay">0:00</span></span>
-        </div>
+<div style="font-size: 14px; margin-bottom: 20px;">
+Tasks: <span id="taskCount" style="color:var(--neon-cyan);">0</span> | 
+Balance: <span class="balance" id="balance">$0.00</span>
+</div>
+
+<button id="adBtn" class="btn btn-main" onclick="openAd()">WATCH AD</button>
+
+<button id="claimBtn" class="btn btn-claim" onclick="claimReward()" style="display:none;">CLAIM REWARD</button>
+
+<p id="statusText"></p>
+
+<h3 style="margin-top:30px; opacity:0.7;">Video Tasks</h3>
+<button class="btn btn-video" style="background:linear-gradient(135deg,#ff7700,#ff0077);" onclick="alert('Opens May 17th!')">WATCH VIDEO</button>
+</div>
+
+<div class="watermark">AdPulse</div>
+
+<script>
+const AD_URL = "PASTE_YOUR_LINK_HERE"; 
+const REWARD = 0.05; 
+const VERIFY_TIME = 30; // Seconds they MUST wait to ensure impression
+const COOLDOWN_TIME = 480; // 8 minutes lockout
+
+const isWifi = navigator.connection && navigator.connection.type === "wifi";
+const LIMIT = isWifi ? 10 : 20;
+
+let balance = parseFloat(localStorage.getItem("balance") || 0);
+let used = parseInt(localStorage.getItem("used") || 0);
+
+function updateUI(){
+    document.getElementById("taskCount").innerText = Math.max(0, LIMIT - used);
+    document.getElementById("balance").innerText = "$" + balance.toFixed(2);
+    
+    // Check if user is currently in an 8-minute cooldown
+    let lastClaim = parseInt(localStorage.getItem("lastClaim") || 0);
+    let diff = (Date.now() - lastClaim) / 1000;
+    
+    if (diff < COOLDOWN_TIME && used > 0) {
+        startCooldownTimer(Math.ceil(COOLDOWN_TIME - diff));
+    }
+}
+
+function openAd(){
+    if(used >= LIMIT) return alert("Daily limit reached!");
+
+    window.open(AD_URL, "_blank");
+    
+    // Hide Watch button, show countdown
+    document.getElementById("adBtn").style.display = "none";
+    let status = document.getElementById("statusText");
+    status.className = "verify-blue";
+    
+    let timeLeft = VERIFY_TIME;
+    let verifyInterval = setInterval(() => {
+        status.innerText = "Verifying View: " + timeLeft + "s...";
+        timeLeft--;
         
-        <button id="adBtn" class="btn btn-main" onclick="startTask()">WATCH AD & EARN</button>
-        
-        <div style="border-top: 2px solid var(--neon-border); margin-top: 25px; padding-top: 15px; box-shadow: 0 -4px 10px rgba(0, 243, 255, 0.3);">
-            <h3 style="color: #f0f6fc; text-shadow: 0 0 10px rgba(255, 255, 255, 0.4);">Video Tasks</h3>
-            <button class="btn btn-video" onclick="showConstruction()">WATCH VIDEO</button>
-        </div>
-    </div>
-
-    <div id="overlay" onclick="this.style.display='none'">
-        <h1 style="color: #f1c40f; text-shadow: 0 0 15px #f1c40f;">🚧 NOTICE 🚧</h1>
-        <p style="font-weight: bold;">This section is UNDER CONSTRUCTION.</p>
-        <p style="color: var(--text-neon-cyan); text-shadow: 0 0 10px var(--text-neon-cyan);">Scheduled activation: SOON!!</p>
-        <button class="modal-btn">BACK</button>
-    </div>
-
-    <script>
-        // --- CONFIGURATION ---
-        const COOLDOWN_MINUTES = 3; // Change this number to 4 if you want 4 minutes
-        const AD_URL = "YOUR_ADSTERRA_DIRECT_LINK_HERE";
-        
-        // Detect WiFi vs Data
-        const isWifi = navigator.connection ? navigator.connection.type === 'wifi' : false;
-        const LIMIT = isWifi ? 10 : 20;
-
-        function updateUI() {
-            let used = parseInt(localStorage.getItem('adsUsed') || 0);
-            let lastClick = parseInt(localStorage.getItem('lastClickTime') || 0);
-            let now = Date.now();
-            let diff = now - lastClick;
-            let cooldownMs = COOLDOWN_MINUTES * 60 * 1000;
-
-            document.getElementById('taskCount').innerText = (LIMIT - used);
-
-            if (diff < cooldownMs && used > 0) {
-                document.getElementById('adBtn').disabled = true;
-                startTimer(cooldownMs - diff);
-            } else {
-                document.getElementById('adBtn').disabled = false;
-                document.getElementById('timerText').style.display = 'none';
-            }
+        if(timeLeft < 0) {
+            clearInterval(verifyInterval);
+            status.innerText = "View Verified!";
+            document.getElementById("claimBtn").style.display = "block";
         }
+    }, 1000);
+}
 
-        function startTimer(duration) {
-            document.getElementById('timerText').style.display = 'block';
-            let display = document.getElementById('timerDisplay');
-            let timer = duration / 1000;
+function claimReward(){
+    balance += REWARD;
+    used++;
+    
+    localStorage.setItem("balance", balance);
+    localStorage.setItem("used", used);
+    localStorage.setItem("lastClaim", Date.now());
 
-            let interval = setInterval(() => {
-                let minutes = Math.floor(timer / 60);
-                let seconds = Math.floor(timer % 60);
-                display.innerText = minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+    document.getElementById("claimBtn").style.display = "none";
+    document.getElementById("adBtn").style.display = "block";
+    
+    updateUI();
+}
 
-                if (--timer < 0) {
-                    clearInterval(interval);
-                    updateUI();
-                }
-            }, 1000);
+function startCooldownTimer(seconds) {
+    let btn = document.getElementById("adBtn");
+    let status = document.getElementById("statusText");
+    btn.disabled = true;
+    status.className = "timer-red";
+
+    let interval = setInterval(() => {
+        let m = Math.floor(seconds / 60);
+        let s = seconds % 60;
+        status.innerText = "Next Task: " + m + ":" + (s < 10 ? "0" : "") + s;
+        seconds--;
+
+        if(seconds < 0) {
+            clearInterval(interval);
+            btn.disabled = false;
+            status.innerText = "Ready!";
         }
+    }, 1000);
+}
 
-        function startTask() {
-            let used = parseInt(localStorage.getItem('adsUsed') || 0);
-            let today = new Date().toDateString();
+window.onload = updateUI;
+</script>
 
-            if (localStorage.getItem('lastDate') !== today) {
-                used = 0;
-                localStorage.setItem('lastDate', today);
-            }
-
-            if (used >= LIMIT) {
-                alert("Daily Limit Reached!");
-                return;
-            }
-
-            // Record click time and open ad
-            localStorage.setItem('lastClickTime', Date.now());
-            localStorage.setItem('adsUsed', used + 1);
-            window.open(AD_URL, "_blank");
-            updateUI();
-        }
-
-        function showConstruction() {
-            document.getElementById('overlay').style.display = 'flex';
-        }
-
-        window.onload = updateUI;
-    </script>
 </body>
 </html>
