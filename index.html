@@ -1,231 +1,1414 @@
-<!DOCTYPE html>
+"""AdPulse Telegram Mini App.
+
+Premium neon Telegram WebApp with 4 tabs (Home / Tasks / Refer / Wallet).
+Reads/writes the same JSON store that bot/main.py uses (bot/data/users.json)
+so balances, hold, referrals and withdrawals stay in sync.
+
+Admin approval for withdrawals still happens in the bot — the mini app just
+creates the pending request and sends an admin notification (with inline
+Approve / Reject buttons) directly to the admin chat via the Telegram HTTP API.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import parse_qsl
+
+from flask import Flask, Response, jsonify, request
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
+
+DATA_DIR = Path(os.environ.get("BOT_DATA_DIR", "bot/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATA_FILE = DATA_DIR / "users.json"
+
+PORT = int(os.environ.get("PORT", "5000"))
+BASE_PATH = os.environ.get("BASE_PATH", "/miniapp").rstrip("/")
+DAILY_TASK_LIMIT = int(os.environ.get("DAILY_TASK_LIMIT", "20"))
+RESET_HOUR_UTC = int(os.environ.get("DAILY_RESET_HOUR_UTC", "3"))
+REFERRAL_REWARD_USD = float(os.environ.get("REFERRAL_REWARD_USD", "0.20"))
+
+# Withdrawal method config (min in USD).
+WITHDRAW_METHODS = {
+    "bkash": {
+        "label": "bKash",
+        "min_usd": 1.00,
+        "field": "bKash number",
+    },
+    "bep20": {
+        "label": "USDT (BEP20)",
+        "min_usd": 0.50,
+        "field": "BEP20 address",
+    },
+    "trx": {
+        "label": "USDT (TRX / TRC20)",
+        "min_usd": 0.29,
+        "field": "TRX address",
+    },
+}
+
+app = Flask(__name__)
+_lock = threading.Lock()
+
+BOT_USERNAME: str | None = None  # populated on startup
+
+# ---------------------------------------------------------------------------
+# Storage (shares the JSON file with bot/main.py)
+# ---------------------------------------------------------------------------
+
+def _load() -> dict:
+    if not DATA_FILE.exists():
+        return {"users": {}}
+    try:
+        return json.loads(DATA_FILE.read_text("utf-8"))
+    except Exception:
+        return {"users": {}}
+
+
+def _save(data: dict) -> None:
+    tmp = DATA_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), "utf-8")
+    tmp.replace(DATA_FILE)
+
+
+def _today_key(now: datetime | None = None) -> str:
+    """Day key with daily roll-over at RESET_HOUR_UTC (default 3am UTC)."""
+    now = now or datetime.now(timezone.utc)
+    if now.hour < RESET_HOUR_UTC:
+        now = now - timedelta(days=1)
+    return now.strftime("%Y-%m-%d")
+
+
+def _ensure_user(data: dict, user_id: int, *, username=None, name=None) -> dict:
+    users = data.setdefault("users", {})
+    rec = users.get(str(user_id))
+    if rec is None:
+        rec = {
+            "balance": 0.0,
+            "hold": 0.0,
+            "username": username,
+            "name": name,
+            "pending": [],
+            "referred_by": None,
+            "referred_users": [],
+            "successful_referrals": [],
+            "referral_earned": 0.0,
+            "first_earned": False,
+            "welcomed": False,
+        }
+        users[str(user_id)] = rec
+
+    # Backfill any missing fields (works for users who were created by the bot
+    # before the mini app existed).
+    rec.setdefault("balance", 0.0)
+    rec.setdefault("hold", 0.0)
+    rec.setdefault("referred_users", [])
+    rec.setdefault("successful_referrals", [])
+    rec.setdefault("referral_earned", 0.0)
+    rec.setdefault("tasks_completed_total", 0)
+    rec.setdefault("lifetime_earned", 0.0)
+    rec.setdefault("tasks_today", DAILY_TASK_LIMIT)
+    rec.setdefault("tasks_reset_date", _today_key())
+    rec.setdefault("withdrawals", [])
+
+    # Daily reset (3am UTC).
+    today = _today_key()
+    if rec.get("tasks_reset_date") != today:
+        rec["tasks_today"] = DAILY_TASK_LIMIT
+        rec["tasks_reset_date"] = today
+
+    if username is not None:
+        rec["username"] = username
+    if name:
+        rec["name"] = name
+    return rec
+
+
+def _state_payload(rec: dict, user_id: int) -> dict:
+    referral_link = (
+        f"https://t.me/{BOT_USERNAME}?start={user_id}" if BOT_USERNAME else f"(refer code: {user_id})"
+    )
+    return {
+        "user_id": user_id,
+        "balance": round(float(rec.get("balance", 0.0)), 4),
+        "hold": round(float(rec.get("hold", 0.0)), 4),
+        "tasks_today": int(rec.get("tasks_today", 0)),
+        "tasks_total": DAILY_TASK_LIMIT,
+        "tasks_completed_total": int(rec.get("tasks_completed_total", 0)),
+        "referred_count": len(rec.get("referred_users", [])),
+        "successful_referrals": len(rec.get("successful_referrals", [])),
+        "referral_earned": round(float(rec.get("referral_earned", 0.0)), 4),
+        "lifetime_earned": round(float(rec.get("lifetime_earned", 0.0)), 4),
+        "referral_link": referral_link,
+        "referral_reward_usd": REFERRAL_REWARD_USD,
+        "bot_username": BOT_USERNAME,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Telegram WebApp initData verification
+# https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+# ---------------------------------------------------------------------------
+
+def verify_init_data(init_data: str) -> dict | None:
+    if not init_data or not BOT_TOKEN:
+        return None
+    parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+    received_hash = parsed.pop("hash", None)
+    if not received_hash:
+        return None
+    data_check = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+    secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+    expected_hash = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_hash, received_hash):
+        return None
+    user_json = parsed.get("user")
+    if not user_json:
+        return None
+    try:
+        return json.loads(user_json)
+    except Exception:
+        return None
+
+
+def _request_user() -> dict | None:
+    body = request.get_json(silent=True) or {}
+    init_data = body.get("initData") or request.form.get("initData") or request.args.get("initData", "")
+    user = verify_init_data(init_data)
+    if user is None and request.args.get("dev_user_id"):
+        # Dev-only fallback so the page can be viewed in a browser.
+        try:
+            user = {
+                "id": int(request.args["dev_user_id"]),
+                "username": request.args.get("dev_username"),
+                "first_name": request.args.get("dev_name", "Dev"),
+            }
+        except ValueError:
+            user = None
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Telegram HTTP helpers (decoupled from the bot process)
+# ---------------------------------------------------------------------------
+
+def _tg_call(method: str, payload: dict) -> dict | None:
+    if not BOT_TOKEN:
+        return None
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        print(f"[miniapp] Telegram API call {method} failed: {exc}", file=sys.stderr)
+        return None
+
+
+def _fetch_bot_username() -> str | None:
+    res = _tg_call("getMe", {})
+    if not res or not res.get("ok"):
+        return None
+    return res.get("result", {}).get("username")
+
+
+def _notify_admin_withdraw(entry: dict, user_info: dict) -> None:
+    if not ADMIN_CHAT_ID:
+        return
+    info = WITHDRAW_METHODS.get(entry["method"], {})
+    label = info.get("label", entry["method"])
+    field = info.get("field", "Address")
+    username = f"@{user_info.get('username')}" if user_info.get("username") else "(no username)"
+    name = user_info.get("name") or "(no name)"
+    text = (
+        "\U0001F4E4 *New Withdrawal Request*\n\n"
+        f"*Withdraw ID:* `{entry['id']}`\n"
+        f"*Method:* {label}\n"
+        f"*Amount:* ${float(entry['amount']):.2f}\n"
+        f"*{field}:* `{entry['address']}`\n\n"
+        f"*User:* {name}\n"
+        f"*Username:* {username}\n"
+        f"*User ID:* `{entry['user_id']}`"
+    )
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "\u2705 Approve", "callback_data": f"wd_ok:{entry['id']}"},
+            {"text": "\u274C Reject", "callback_data": f"wd_no:{entry['id']}"},
+        ]]
+    }
+    _tg_call(
+        "sendMessage",
+        {
+            "chat_id": ADMIN_CHAT_ID,
+            "text": text,
+            "parse_mode": "Markdown",
+            "reply_markup": keyboard,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@app.route(f"{BASE_PATH}/healthz", methods=["GET"])
+@app.route(f"{BASE_PATH}/", methods=["GET"])
+@app.route(BASE_PATH or "/", methods=["GET"])
+def index():
+    if request.path.endswith("/healthz"):
+        return jsonify({"status": "ok"})
+    html = HTML_TEMPLATE.replace("__BASE__", BASE_PATH)
+    return Response(html, mimetype="text/html")
+
+
+@app.route(f"{BASE_PATH}/api/me", methods=["POST"])
+def api_me():
+    user = _request_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    user_id = int(user["id"])
+    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or None
+    with _lock:
+        data = _load()
+        rec = _ensure_user(data, user_id, username=user.get("username"), name=name)
+        _save(data)
+        payload = _state_payload(rec, user_id)
+    return jsonify(payload)
+
+
+@app.route(f"{BASE_PATH}/api/watch", methods=["POST"])
+def api_watch():
+    user = _request_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    user_id = int(user["id"])
+    with _lock:
+        data = _load()
+        rec = _ensure_user(data, user_id, username=user.get("username"))
+        if rec.get("tasks_today", 0) <= 0:
+            payload = _state_payload(rec, user_id)
+            _save(data)
+            return jsonify({"error": "no_tasks_left", **payload}), 400
+        rec["tasks_today"] = int(rec["tasks_today"]) - 1
+        rec["tasks_completed_total"] = int(rec.get("tasks_completed_total", 0)) + 1
+        # NOTE: actual ad-reward credit will be wired here when Monetag /
+        # Adsgram / Adsterra SDK details are provided. For now this just
+        # records that the user used a task slot.
+        _save(data)
+        payload = _state_payload(rec, user_id)
+    return jsonify(payload)
+
+
+@app.route(f"{BASE_PATH}/api/withdraw", methods=["POST"])
+def api_withdraw():
+    user = _request_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+
+    body = request.get_json(silent=True) or {}
+    method = (body.get("method") or "").strip()
+    address = (body.get("address") or "").strip()
+    try:
+        amount = float(body.get("amount", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid amount."}), 400
+
+    if method not in WITHDRAW_METHODS:
+        return jsonify({"error": "Unknown withdrawal method."}), 400
+    if not address:
+        return jsonify({"error": "Please provide your address / number."}), 400
+    info = WITHDRAW_METHODS[method]
+    if amount < info["min_usd"]:
+        return jsonify({
+            "error": f"Minimum withdrawal for {info['label']} is ${info['min_usd']:.2f}."
+        }), 400
+
+    user_id = int(user["id"])
+    name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or None
+
+    with _lock:
+        data = _load()
+        rec = _ensure_user(data, user_id, username=user.get("username"), name=name)
+        balance = float(rec.get("balance", 0.0))
+        if amount > balance + 1e-9:
+            payload = _state_payload(rec, user_id)
+            return jsonify({
+                "error": f"Insufficient balance. You have ${balance:.2f}.",
+                **payload,
+            }), 400
+        # Reserve the funds: deduct from balance now. If admin rejects, the
+        # bot's resolve_withdrawal() refunds it.
+        rec["balance"] = round(balance - amount, 4)
+        wd_id = data.get("next_withdraw_id", 1)
+        data["next_withdraw_id"] = wd_id + 1
+        entry = {
+            "id": wd_id,
+            "user_id": user_id,
+            "method": method,
+            "address": address,
+            "amount": round(amount, 4),
+            "status": "pending",
+            "ts": int(time.time()),
+        }
+        rec.setdefault("withdrawals", []).append(entry)
+        data.setdefault("pending_withdrawals", []).append(entry)
+        _save(data)
+        user_info = {"username": rec.get("username"), "name": rec.get("name")}
+        payload = _state_payload(rec, user_id)
+
+    # Fire admin notification outside of the lock.
+    _notify_admin_withdraw(entry, user_info)
+
+    return jsonify({
+        "ok": True,
+        "withdraw_id": wd_id,
+        "method_label": info["label"],
+        **payload,
+    })
+
+
+# ---------------------------------------------------------------------------
+# HTML / CSS / JS — kept inline so this module is fully self-contained.
+# ---------------------------------------------------------------------------
+
+HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AdPulse Neon Edition</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AdPulse</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src='//libtl.com/sdk.js' data-zone='10932641' data-sdk='show_10932641'></script>
-
 <style>
-:root {
-    --neon-cyan:#00f3ff;
-    --neon-pink:#ff0077;
-    --bg-dark:#05070f;
-}
+  :root {
+    --neon-purple: #a855f7;
+    --neon-pink:   #ec4899;
+    --neon-cyan:   #06b6d4;
+    --neon-gold:   #facc15;
+    --neon-green:  #22d3ee;
+    --text:        #f5f3ff;
+    --hint:        #b4a7d6;
+    --card-bg:     rgba(20, 12, 48, 0.55);
+    --card-border: rgba(168, 85, 247, 0.35);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100vh;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(ellipse 80% 50% at 15% -10%, rgba(168, 85, 247, 0.45) 0%, transparent 60%),
+      radial-gradient(ellipse 70% 55% at 85% 15%, rgba(236, 72, 153, 0.30) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 50% 110%, rgba(6, 182, 212, 0.30) 0%, transparent 60%),
+      linear-gradient(160deg, #0a0420 0%, #11052e 35%, #1a0a3d 65%, #08081f 100%);
+    background-attachment: fixed;
+  }
 
-body {
-    margin:0;
-    font-family:Segoe UI;
-    color:white;
-    overflow-x:hidden;
-    background:radial-gradient(circle at 30% 30%,#00f3ff22,transparent),
-               radial-gradient(circle at 70% 70%,#ff007722,transparent),
-               var(--bg-dark);
-    min-height:100vh;
-}
+  /* Centered watermark visible across all 4 tabs */
+  .watermark {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) rotate(-18deg);
+    font-size: clamp(64px, 22vw, 120px);
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 4px;
+    background: linear-gradient(120deg, var(--neon-pink), var(--neon-purple), var(--neon-cyan));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    opacity: 0.22;
+    pointer-events: none;
+    user-select: none;
+    z-index: 0;
+    white-space: nowrap;
+    filter:
+      drop-shadow(0 0 14px rgba(236, 72, 153, 0.55))
+      drop-shadow(0 0 32px rgba(168, 85, 247, 0.45));
+    animation: watermark-glow 3.6s ease-in-out infinite;
+    will-change: filter, opacity;
+  }
 
-body::before{
-    content:"";
-    position:fixed;
-    inset:0;
-    background:linear-gradient(120deg,#00f3ff33,#8a2eff33,#ff007733);
-    filter:blur(80px);
-    animation:move 12s linear infinite;
-    z-index:-1;
-}
+  @keyframes watermark-glow {
+    0%, 100% {
+      opacity: 0.18;
+      filter:
+        drop-shadow(0 0 10px rgba(236, 72, 153, 0.40))
+        drop-shadow(0 0 24px rgba(168, 85, 247, 0.30));
+    }
+    50% {
+      opacity: 0.34;
+      filter:
+        drop-shadow(0 0 22px rgba(236, 72, 153, 0.80))
+        drop-shadow(0 0 50px rgba(6, 182, 212, 0.55))
+        drop-shadow(0 0 70px rgba(168, 85, 247, 0.45));
+    }
+  }
 
-@keyframes move{
-    0%{transform:translateX(-20%)}
-    100%{transform:translateX(20%)}
-}
+  .app {
+    position: relative;
+    z-index: 1;
+    padding: 18px 16px 110px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
 
-.notice{
-    text-align:center;
-    background:#990000;
-    padding:14px;
-    font-weight:bold;
-    font-size:13px;
-    animation:blink 1.5s infinite;
-}
+  .header {
+    text-align: center;
+    margin-bottom: 18px;
+  }
+  .header .brand {
+    font-size: 22px;
+    font-weight: 800;
+    font-style: italic;
+    letter-spacing: 1px;
+    background: linear-gradient(90deg, var(--neon-cyan), var(--neon-purple), var(--neon-pink));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 24px rgba(168, 85, 247, 0.4);
+  }
+  .header .sub {
+    font-size: 11px;
+    color: var(--hint);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
 
-@keyframes blink{
-    50%{opacity:0.6;background:#ff0000;}
-}
+  .tab { display: none; }
+  .tab.active { display: block; animation: fadeUp .25s ease-out; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-.card{
-    margin:60px auto;
-    width:320px;
-    padding:30px;
-    border-radius:25px;
-    background:rgba(20,20,40,0.7);
-    backdrop-filter:blur(20px);
-    text-align:center;
-    box-shadow:0 0 40px #00f3ff55;
-}
+  /* ---- Balance card ---- */
+  .balance-card {
+    position: relative;
+    background:
+      linear-gradient(135deg, rgba(168, 85, 247, 0.95) 0%, rgba(124, 58, 237, 0.95) 50%, rgba(236, 72, 153, 0.95) 100%);
+    border: 1.5px solid rgba(236, 72, 153, 0.6);
+    border-radius: 22px;
+    padding: 28px 22px;
+    color: #fff;
+    text-align: center;
+    box-shadow:
+      0 0 40px rgba(168, 85, 247, 0.45),
+      0 0 80px rgba(236, 72, 153, 0.25),
+      0 12px 30px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+  .balance-card::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle at 20% 0%, rgba(255,255,255,0.25), transparent 50%);
+    pointer-events: none;
+  }
+  .balance-card .label {
+    position: relative;
+    font-size: 12px; opacity: 0.95; margin-bottom: 6px;
+    letter-spacing: 1.5px; text-transform: uppercase; font-weight: 700;
+  }
+  .balance-card .amount {
+    position: relative;
+    font-size: 44px; font-weight: 800; line-height: 1.1; letter-spacing: -0.5px;
+    text-shadow: 0 0 20px rgba(255,255,255,0.4);
+  }
+  .balance-card .sub {
+    position: relative;
+    font-size: 13px; opacity: 0.9; margin-top: 8px;
+  }
 
-.btn{
-    width:100%;
-    padding:18px;
-    margin-top:15px;
-    border:none;
-    border-radius:15px;
-    font-weight:bold;
-    cursor:pointer;
-}
+  /* ---- Generic neon glass card ---- */
+  .neon-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow:
+      0 0 24px rgba(168, 85, 247, 0.15),
+      0 4px 14px rgba(0, 0, 0, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
 
-.btn-main{
-    background:linear-gradient(135deg,#00f3ff,#008cff);
-    color:black;
-}
+  .refer-id-box {
+    margin-top: 14px;
+    padding: 12px 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.18), rgba(168, 85, 247, 0.12));
+    border: 1px solid rgba(6, 182, 212, 0.4);
+    border-radius: 14px;
+    box-shadow: 0 0 18px rgba(6, 182, 212, 0.2);
+  }
+  .refer-id-box .lbl {
+    color: var(--neon-cyan);
+    font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase;
+    margin-bottom: 2px; font-weight: 700;
+  }
+  .refer-id-box .val {
+    font-size: 15px; font-weight: 700;
+    font-family: "SF Mono", Menlo, monospace;
+    color: #fff;
+  }
+  .copy-btn {
+    color: #fff; font-size: 12px; font-weight: 700;
+    cursor: pointer; padding: 8px 14px;
+    background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple));
+    border: 1px solid rgba(6, 182, 212, 0.6);
+    border-radius: 999px;
+    box-shadow: 0 0 14px rgba(6, 182, 212, 0.4);
+    user-select: none;
+  }
+  .copy-btn:active { transform: scale(0.96); }
 
-.btn-video{
-    background:linear-gradient(135deg,#ff7700,#ff0077);
-    color:white;
-}
+  .stats-row {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 12px; margin-top: 14px;
+  }
+  .stat {
+    padding: 14px 16px;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.18), rgba(76, 29, 149, 0.18));
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    border-radius: 14px;
+    box-shadow: 0 0 18px rgba(168, 85, 247, 0.15);
+  }
+  .stat .label {
+    font-size: 11px; color: var(--hint);
+    margin-bottom: 6px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600;
+  }
+  .stat .value { font-size: 22px; font-weight: 800; color: #fff; }
 
-.btn:disabled{
-    background:#222;
-    color:#555;
-}
+  .stat-big {
+    margin-top: 12px;
+    padding: 22px;
+    background: linear-gradient(135deg, #f59e0b 0%, #facc15 50%, #f97316 100%);
+    color: #2a1700;
+    border: 1.5px solid rgba(250, 204, 21, 0.7);
+    border-radius: 18px;
+    box-shadow:
+      0 0 30px rgba(250, 204, 21, 0.45),
+      0 0 60px rgba(249, 115, 22, 0.25),
+      0 8px 22px rgba(0,0,0,0.4);
+  }
+  .stat-big .label {
+    color: rgba(42, 23, 0, 0.85);
+    font-size: 12px; letter-spacing: 0.7px; text-transform: uppercase;
+    font-weight: 700; margin-bottom: 4px;
+  }
+  .stat-big .value { font-size: 32px; font-weight: 900; text-shadow: 0 0 14px rgba(255,255,255,0.5); }
 
-.watermark{
-    text-align:center;
-    font-size:60px;
-    opacity:0.1;
-    margin-top:40px;
-}
+  /* ---- Tasks tab ---- */
+  .task-card {
+    padding: 26px 22px; text-align: center;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(6, 182, 212, 0.18));
+    border: 1.5px solid rgba(168, 85, 247, 0.45);
+    border-radius: 20px;
+    box-shadow:
+      0 0 30px rgba(168, 85, 247, 0.3),
+      0 0 60px rgba(6, 182, 212, 0.15),
+      inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  .task-card .icon {
+    font-size: 52px; margin-bottom: 10px;
+    filter: drop-shadow(0 0 10px rgba(236, 72, 153, 0.6));
+  }
+  .task-card .title {
+    font-size: 22px; font-weight: 800; margin-bottom: 6px;
+    background: linear-gradient(90deg, #fff, #e0d4ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .task-card .desc { font-size: 13px; color: var(--hint); margin-bottom: 18px; }
+  .task-counter {
+    display: inline-block;
+    padding: 9px 20px;
+    background: rgba(6, 182, 212, 0.15);
+    color: var(--neon-cyan);
+    border: 1px solid rgba(6, 182, 212, 0.4);
+    border-radius: 999px;
+    font-size: 13px; font-weight: 700;
+    margin-bottom: 18px;
+    box-shadow: 0 0 14px rgba(6, 182, 212, 0.25);
+  }
+
+  /* ---- Buttons ---- */
+  .btn-neon {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, var(--neon-purple) 0%, var(--neon-pink) 100%);
+    color: #fff;
+    border: 1.5px solid rgba(236, 72, 153, 0.7);
+    border-radius: 14px;
+    font-size: 16px; font-weight: 800; letter-spacing: 0.3px;
+    cursor: pointer;
+    box-shadow:
+      0 0 22px rgba(236, 72, 153, 0.55),
+      0 0 44px rgba(168, 85, 247, 0.35),
+      inset 0 1px 0 rgba(255,255,255,0.18);
+    transition: transform 0.05s, box-shadow 0.2s;
+  }
+  .btn-neon:active { transform: scale(0.98); }
+  .btn-neon:hover {
+    box-shadow:
+      0 0 30px rgba(236, 72, 153, 0.75),
+      0 0 60px rgba(168, 85, 247, 0.5),
+      inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+  .btn-neon:disabled {
+    opacity: 0.45; cursor: not-allowed;
+    box-shadow: none; filter: grayscale(0.3);
+  }
+  .btn-neon.cyan {
+    background: linear-gradient(135deg, var(--neon-cyan) 0%, #3b82f6 100%);
+    border-color: rgba(6, 182, 212, 0.7);
+    box-shadow: 0 0 22px rgba(6, 182, 212, 0.55), 0 0 44px rgba(59, 130, 246, 0.3);
+  }
+  .btn-neon.gold {
+    background: linear-gradient(135deg, #facc15 0%, #f97316 100%);
+    color: #2a1700;
+    border-color: rgba(250, 204, 21, 0.7);
+    box-shadow: 0 0 22px rgba(250, 204, 21, 0.55), 0 0 44px rgba(249, 115, 22, 0.3);
+  }
+  .btn-ghost {
+    width: 100%;
+    padding: 13px;
+    background: rgba(255,255,255,0.04);
+    color: var(--hint);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .btn-ghost:active { transform: scale(0.98); }
+
+  .hint-text { font-size: 12px; color: var(--hint); margin-top: 14px; font-style: italic; }
+
+  /* ---- Refer tab ---- */
+  .refer-link-card {
+    padding: 18px;
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.20), rgba(168, 85, 247, 0.20));
+    border: 1.5px solid rgba(6, 182, 212, 0.5);
+    border-radius: 18px;
+    box-shadow: 0 0 28px rgba(6, 182, 212, 0.28);
+  }
+  .refer-link-card .lbl {
+    color: var(--neon-cyan); font-size: 11px; letter-spacing: 1px;
+    text-transform: uppercase; font-weight: 700; margin-bottom: 8px;
+  }
+  .refer-link-card .link {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: #fff;
+    word-break: break-all;
+    margin-bottom: 12px;
+  }
+  .how-card { margin-top: 14px; padding: 18px; }
+  .how-card h3 {
+    margin: 0 0 12px 0; font-size: 15px; color: var(--neon-purple);
+    letter-spacing: 0.6px; text-transform: uppercase;
+  }
+  .how-step {
+    display: flex; gap: 12px; align-items: flex-start; margin: 10px 0;
+  }
+  .how-step .num {
+    flex: 0 0 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--neon-purple), var(--neon-pink));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800; color: #fff;
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.5);
+  }
+  .how-step .txt { font-size: 13px; line-height: 1.5; color: #e7dffd; padding-top: 3px; }
+  .reward-pill {
+    margin-top: 14px;
+    padding: 10px 14px;
+    background: linear-gradient(135deg, rgba(250, 204, 21, 0.18), rgba(249, 115, 22, 0.16));
+    border: 1px solid rgba(250, 204, 21, 0.5);
+    border-radius: 12px;
+    text-align: center;
+    font-size: 13px; color: #fff8d6; font-weight: 600;
+  }
+  .reward-pill b { color: var(--neon-gold); font-size: 15px; font-style: italic; }
+
+  .three-stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px; margin-top: 14px;
+  }
+  .three-stats .stat .value { font-size: 19px; }
+  .three-stats .stat .label { font-size: 10px; }
+
+  /* ---- Wallet tab ---- */
+  .wallet-summary {
+    padding: 18px; margin-bottom: 14px;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(6, 182, 212, 0.18));
+    border: 1.5px solid rgba(168, 85, 247, 0.45);
+    border-radius: 18px;
+    box-shadow: 0 0 24px rgba(168, 85, 247, 0.28);
+    text-align: center;
+  }
+  .wallet-summary .label {
+    font-size: 11px; color: var(--hint);
+    letter-spacing: 1.2px; text-transform: uppercase; font-weight: 700;
+  }
+  .wallet-summary .amount {
+    font-size: 36px; font-weight: 900; color: #fff;
+    text-shadow: 0 0 18px rgba(168, 85, 247, 0.6);
+    margin: 4px 0;
+  }
+  .wallet-summary .hold-line { font-size: 12px; color: var(--hint); }
+
+  .wallet-screen { display: none; }
+  .wallet-screen.active { display: block; animation: slideUp .25s ease-out; }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+  .section-title {
+    font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--neon-cyan); margin: 16px 4px 10px; font-weight: 700;
+  }
+
+  .method-card {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 18px; margin-bottom: 12px;
+    background: var(--card-bg);
+    border: 1.5px solid var(--card-border);
+    border-radius: 16px;
+    cursor: pointer;
+    box-shadow: 0 0 20px rgba(168, 85, 247, 0.18), 0 4px 12px rgba(0,0,0,0.35);
+    transition: transform 0.15s, box-shadow 0.2s, border-color 0.2s;
+    backdrop-filter: blur(14px);
+    opacity: 0; transform: translateX(-30px);
+  }
+  .method-card.show { opacity: 1; transform: translateX(0); animation: slideIn .45s cubic-bezier(.2,.8,.2,1.05); }
+  .method-card:nth-child(odd).show { animation-name: slideInLeft; }
+  .method-card:nth-child(even).show { animation-name: slideInRight; }
+  @keyframes slideInLeft { 0% { opacity: 0; transform: translateX(-40px) scale(0.95); } 100% { opacity: 1; transform: none; } }
+  @keyframes slideInRight { 0% { opacity: 0; transform: translateX(40px) scale(0.95); } 100% { opacity: 1; transform: none; } }
+  .method-card:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(168, 85, 247, 0.35), 0 6px 18px rgba(0,0,0,0.45); }
+  .method-card:active { transform: scale(0.98); }
+  .method-card .m-icon {
+    flex: 0 0 52px; height: 52px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px;
+  }
+  .method-card .m-text { flex: 1; }
+  .method-card .m-text .t { font-size: 16px; font-weight: 800; color: #fff; }
+  .method-card .m-text .d { font-size: 12px; color: var(--hint); margin-top: 2px; }
+  .method-card .m-arrow { color: var(--neon-purple); font-size: 22px; font-weight: 800; }
+
+  .method-card.bkash .m-icon { background: linear-gradient(135deg, #e2136e, #ff4d8d); box-shadow: 0 0 18px rgba(226, 19, 110, 0.55); }
+  .method-card.bkash { border-color: rgba(226, 19, 110, 0.55); box-shadow: 0 0 24px rgba(226, 19, 110, 0.25); }
+  .method-card.binance .m-icon { background: linear-gradient(135deg, #f0b90b, #facc15); color: #1a1208; box-shadow: 0 0 18px rgba(240, 185, 11, 0.55); }
+  .method-card.binance { border-color: rgba(240, 185, 11, 0.55); box-shadow: 0 0 24px rgba(240, 185, 11, 0.25); }
+  .method-card.bep20 .m-icon { background: linear-gradient(135deg, #f0b90b, #f97316); color: #1a1208; box-shadow: 0 0 18px rgba(240, 185, 11, 0.55); }
+  .method-card.bep20 { border-color: rgba(240, 185, 11, 0.55); box-shadow: 0 0 24px rgba(240, 185, 11, 0.25); }
+  .method-card.trx .m-icon { background: linear-gradient(135deg, #ef4444, #f97316); box-shadow: 0 0 18px rgba(239, 68, 68, 0.55); }
+  .method-card.trx { border-color: rgba(239, 68, 68, 0.55); box-shadow: 0 0 24px rgba(239, 68, 68, 0.25); }
+
+  .field-label {
+    display: block; font-size: 11px; color: var(--hint);
+    letter-spacing: 0.8px; text-transform: uppercase; font-weight: 700;
+    margin: 14px 4px 6px;
+  }
+  .field-input {
+    width: 100%; padding: 14px;
+    background: rgba(8, 4, 24, 0.6);
+    border: 1.5px solid rgba(168, 85, 247, 0.35);
+    border-radius: 12px;
+    color: #fff; font-size: 15px;
+    box-shadow: 0 0 18px rgba(168, 85, 247, 0.12) inset;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    -webkit-appearance: none;
+  }
+  .field-input:focus {
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 18px rgba(6, 182, 212, 0.35);
+  }
+  .field-input::placeholder { color: rgba(180, 167, 214, 0.5); }
+
+  .caution {
+    margin-top: 14px; padding: 12px 14px;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 12px;
+    font-size: 12px; color: #ffd0d0; line-height: 1.5;
+  }
+  .caution b { color: #ff7676; font-style: italic; }
+
+  .back-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--neon-cyan); cursor: pointer; padding: 6px 0;
+    font-size: 13px; font-weight: 600; user-select: none;
+  }
+
+  .row { display: flex; gap: 10px; margin-top: 16px; }
+  .row > * { flex: 1; }
+
+  .success-box {
+    padding: 28px 22px; text-align: center;
+    background: linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(6, 182, 212, 0.18));
+    border: 1.5px solid rgba(34, 197, 94, 0.5);
+    border-radius: 18px;
+    box-shadow: 0 0 28px rgba(34, 197, 94, 0.28);
+  }
+  .success-box .ico { font-size: 56px; margin-bottom: 10px; filter: drop-shadow(0 0 14px rgba(34, 197, 94, 0.6)); }
+  .success-box .title { font-size: 18px; font-weight: 800; margin-bottom: 6px; }
+  .success-box .msg { font-size: 13px; color: var(--hint); line-height: 1.5; }
+
+  /* ---- Bottom nav ---- */
+  .tabbar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    background: rgba(10, 4, 28, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(168, 85, 247, 0.3);
+    padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
+    z-index: 10;
+    box-shadow: 0 -8px 30px rgba(0,0,0,0.5), 0 -2px 24px rgba(168, 85, 247, 0.18);
+  }
+  .tab-btn {
+    flex: 1; padding: 8px 4px;
+    text-align: center; color: var(--hint);
+    font-size: 11px; font-weight: 700;
+    cursor: pointer; background: none; border: 0;
+    transition: color 0.15s, transform 0.1s;
+  }
+  .tab-btn .icon { font-size: 22px; display: block; margin-bottom: 2px; }
+  .tab-btn.active {
+    color: var(--neon-cyan);
+    text-shadow: 0 0 10px rgba(6, 182, 212, 0.6);
+  }
+  .tab-btn.active .icon { filter: drop-shadow(0 0 8px rgba(6, 182, 212, 0.7)); }
+
+  .toast {
+    position: fixed;
+    bottom: 110px; left: 50%; transform: translateX(-50%);
+    background: linear-gradient(135deg, rgba(15, 5, 36, 0.95), rgba(30, 10, 60, 0.95));
+    color: #fff;
+    padding: 11px 22px;
+    border-radius: 999px;
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    font-size: 13px; font-weight: 600;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+    z-index: 30; white-space: nowrap;
+    box-shadow: 0 0 24px rgba(168, 85, 247, 0.4);
+  }
+  .toast.show { opacity: 1; }
 </style>
 </head>
-
 <body>
+  <div class="watermark">AdPulse</div>
+  <div class="app">
+    <div class="header">
+      <div class="brand">AdPulse</div>
+      <div class="sub">Watch · Earn · Withdraw</div>
+    </div>
 
-<div class="notice">NO VPN | MOBILE DATA RECOMMENDED</div>
+    <!-- ============================ HOME ============================ -->
+    <div id="home" class="tab active">
+      <div class="balance-card">
+        <div class="label">Your Balance</div>
+        <div class="amount" id="balance">0.00 $</div>
+        <div class="sub" id="hold-sub">Hold: $0.00</div>
+      </div>
 
-<div class="card">
-    <h2 id="brand">AdPulse_NEON</h2>
+      <div class="refer-id-box">
+        <div>
+          <div class="lbl">Your Refer ID</div>
+          <div class="val" id="refer-id">—</div>
+        </div>
+        <div class="copy-btn" id="copy-id">Copy</div>
+      </div>
 
-    <p>Coins: <span id="coins">0</span></p>
-    <p>Tasks Left: <span id="tasks">5</span></p>
+      <div class="stats-row">
+        <div class="stat">
+          <div class="label">Tasks Completed</div>
+          <div class="value" id="tasks-completed">0</div>
+        </div>
+        <div class="stat">
+          <div class="label">Referrals</div>
+          <div class="value" id="referrals">0</div>
+        </div>
+      </div>
 
-    <button class="btn btn-main" id="taskBtn" onclick="startTask()">START TASK</button>
+      <div class="stat-big">
+        <div class="label">Lifetime Earnings</div>
+        <div class="value" id="lifetime">$0.00</div>
+      </div>
+    </div>
 
-    <p id="status"></p>
+    <!-- ============================ TASKS ============================ -->
+    <div id="tasks" class="tab">
+      <div class="task-card">
+        <div class="icon">🎬</div>
+        <div class="title">Watch Ads &amp; Earn</div>
+        <div class="desc">Watch a short ad and earn an instant reward.</div>
+        <div class="task-counter" id="task-counter">20 of 20 tasks available</div>
+        <button class="btn-neon" id="watch-btn">Watch Ad</button>
+        <div class="hint-text">Daily limit resets at 3:00 AM UTC.</div>
+      </div>
+    </div>
 
-    <button class="btn btn-video" onclick="openVideo()">WATCH VIDEO TASK</button>
-</div>
+    <!-- ============================ REFER ============================ -->
+    <div id="refer" class="tab">
+      <div class="refer-link-card">
+        <div class="lbl">Your Referral Link</div>
+        <div class="link" id="refer-link">Loading…</div>
+        <button class="btn-neon cyan" id="copy-refer-link">Copy Link</button>
+      </div>
 
-<div class="watermark">AdPulse</div>
+      <div class="reward-pill">
+        Earn <b id="refer-reward">$0.20</b> per successful refer
+      </div>
+
+      <div class="neon-card how-card">
+        <h3>How it works</h3>
+        <div class="how-step">
+          <div class="num">1</div>
+          <div class="txt">Share your link with friends. They tap it to open AdPulse.</div>
+        </div>
+        <div class="how-step">
+          <div class="num">2</div>
+          <div class="txt">They press <b>/start</b> and join our official channel.</div>
+        </div>
+        <div class="how-step">
+          <div class="num">3</div>
+          <div class="txt">Once they earn from an ad for the first time, your refer becomes <b>successful</b> and an admin reviews your reward.</div>
+        </div>
+      </div>
+
+      <div class="three-stats">
+        <div class="stat">
+          <div class="label">Referred</div>
+          <div class="value" id="r-referred">0</div>
+        </div>
+        <div class="stat">
+          <div class="label">Successful</div>
+          <div class="value" id="r-successful">0</div>
+        </div>
+        <div class="stat">
+          <div class="label">Earnings</div>
+          <div class="value" id="r-earnings">$0.00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================ WALLET ============================ -->
+    <div id="wallet" class="tab">
+      <div class="wallet-summary">
+        <div class="label">Available Balance</div>
+        <div class="amount" id="w-balance">$0.00</div>
+        <div class="hold-line" id="w-hold">Hold: $0.00</div>
+      </div>
+
+      <!-- screen: pick top-level method -->
+      <div class="wallet-screen active" data-screen="main">
+        <div class="section-title">Choose withdrawal method</div>
+        <div class="method-card bkash" data-action="pick-bkash">
+          <div class="m-icon">📱</div>
+          <div class="m-text"><div class="t">bKash</div><div class="d">Mobile money · Bangladesh</div></div>
+          <div class="m-arrow">›</div>
+        </div>
+        <div class="method-card binance" data-action="pick-binance">
+          <div class="m-icon">🪙</div>
+          <div class="m-text"><div class="t">Binance</div><div class="d">USDT — BEP20 or TRX</div></div>
+          <div class="m-arrow">›</div>
+        </div>
+      </div>
+
+      <!-- screen: bkash form -->
+      <div class="wallet-screen" data-screen="bkash">
+        <div class="back-btn" data-back="main">‹ Back</div>
+        <div class="section-title">bKash withdrawal</div>
+        <label class="field-label">bKash number</label>
+        <input class="field-input" id="bkash-number" type="tel" inputmode="tel" placeholder="01XXXXXXXXX">
+        <label class="field-label">Amount (USD)</label>
+        <input class="field-input" id="bkash-amount" type="number" inputmode="decimal" step="0.01" min="1" placeholder="Min $1.00">
+        <div class="caution"><b>⚠ CAUTION:</b> If you provide a wrong number, your payment will get lost. <i>AdPulse will not be held responsible.</i></div>
+        <div class="row">
+          <button class="btn-ghost" data-back="main">Cancel</button>
+          <button class="btn-neon" data-submit="bkash">Submit</button>
+        </div>
+      </div>
+
+      <!-- screen: binance sub-options -->
+      <div class="wallet-screen" data-screen="binance">
+        <div class="back-btn" data-back="main">‹ Back</div>
+        <div class="section-title">Choose Binance network</div>
+        <div class="method-card bep20" data-action="pick-bep20">
+          <div class="m-icon">⚡</div>
+          <div class="m-text"><div class="t">USDT (BEP20)</div><div class="d">Binance Smart Chain · min $0.50</div></div>
+          <div class="m-arrow">›</div>
+        </div>
+        <div class="method-card trx" data-action="pick-trx">
+          <div class="m-icon">🔺</div>
+          <div class="m-text"><div class="t">USDT (TRX / TRC20)</div><div class="d">Tron network · min $0.29</div></div>
+          <div class="m-arrow">›</div>
+        </div>
+      </div>
+
+      <!-- screen: bep20 form -->
+      <div class="wallet-screen" data-screen="bep20">
+        <div class="back-btn" data-back="binance">‹ Back</div>
+        <div class="section-title">USDT (BEP20) withdrawal</div>
+        <label class="field-label">BEP20 wallet address</label>
+        <input class="field-input" id="bep20-address" type="text" placeholder="0x…">
+        <label class="field-label">Amount (USD)</label>
+        <input class="field-input" id="bep20-amount" type="number" inputmode="decimal" step="0.01" min="0.5" placeholder="Min $0.50">
+        <div class="caution"><b>⚠ CAUTION:</b> Wrong network or wallet address means lost funds. <i>AdPulse will not be held responsible.</i></div>
+        <div class="row">
+          <button class="btn-ghost" data-back="binance">Cancel</button>
+          <button class="btn-neon" data-submit="bep20">Submit</button>
+        </div>
+      </div>
+
+      <!-- screen: trx form -->
+      <div class="wallet-screen" data-screen="trx">
+        <div class="back-btn" data-back="binance">‹ Back</div>
+        <div class="section-title">USDT (TRX) withdrawal</div>
+        <label class="field-label">TRX (TRC20) wallet address</label>
+        <input class="field-input" id="trx-address" type="text" placeholder="T…">
+        <label class="field-label">Amount (USD)</label>
+        <input class="field-input" id="trx-amount" type="number" inputmode="decimal" step="0.01" min="0.29" placeholder="Min $0.29">
+        <div class="caution"><b>⚠ CAUTION:</b> Wrong network or wallet address means lost funds. <i>AdPulse will not be held responsible.</i></div>
+        <div class="row">
+          <button class="btn-ghost" data-back="binance">Cancel</button>
+          <button class="btn-neon" data-submit="trx">Submit</button>
+        </div>
+      </div>
+
+      <!-- screen: success -->
+      <div class="wallet-screen" data-screen="success">
+        <div class="success-box">
+          <div class="ico">✅</div>
+          <div class="title">Request submitted</div>
+          <div class="msg" id="success-msg">Your withdrawal is pending admin approval.</div>
+        </div>
+        <button class="btn-neon cyan" style="margin-top:18px" data-back="main">Make Another Request</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabbar">
+    <button class="tab-btn active" data-tab="home"><span class="icon">🏠</span>Home</button>
+    <button class="tab-btn" data-tab="tasks"><span class="icon">✅</span>Tasks</button>
+    <button class="tab-btn" data-tab="refer"><span class="icon">👥</span>Refer</button>
+    <button class="tab-btn" data-tab="wallet"><span class="icon">🏦</span>Wallet</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
 
 <script>
-const tg = window.Telegram.WebApp;
-tg.expand();
+const BASE = "__BASE__";
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+const initData = (tg && tg.initData) ? tg.initData : "";
 
-let coins = parseInt(localStorage.getItem("coins") || 0);
-let tasks = parseInt(localStorage.getItem("tasks") || 5);
-let last = 0;
+let state = null;
 
-function updateUI(){
-    document.getElementById("coins").innerText = coins;
-    document.getElementById("tasks").innerText = tasks;
-}
-updateUI();
-
-/* =========================
-   TASK SYSTEM (CORE)
-========================= */
-function startTask(){
-    if(tasks <= 0){
-        alert("No tasks left today");
-        return;
-    }
-
-    let btn = document.getElementById("taskBtn");
-    btn.disabled = true;
-
-    document.getElementById("status").innerText = "Preparing reward...";
-
-    // anti-spam delay
-    setTimeout(() => {
-        let viewed = false;
-
-
-        showAd();
-
-    }, 3000);
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => el.classList.remove("show"), 2200);
 }
 
-/* =========================
-   MONETAG AD SYSTEM
-========================= */
-function showAd(){
+function fmt(amount) {
+  const n = Number(amount) || 0;
+  return "$" + n.toFixed(2);
+}
 
-    if(typeof show_10932641 !== "function"){
-        alert("Ad not ready");
-        return;
+function render(s) {
+  state = s;
+  document.getElementById("balance").textContent = fmt(s.balance);
+  document.getElementById("hold-sub").textContent = "Hold: " + fmt(s.hold);
+  document.getElementById("refer-id").textContent = s.user_id;
+  document.getElementById("tasks-completed").textContent = s.tasks_completed_total;
+  document.getElementById("referrals").textContent = s.referred_count;
+  document.getElementById("lifetime").textContent = fmt(s.lifetime_earned);
+  document.getElementById("task-counter").textContent =
+    s.tasks_today + " of " + s.tasks_total + " tasks available";
+  const btn = document.getElementById("watch-btn");
+  // Don't clobber the button while a cooldown / awaiting-return is in progress.
+  if (!watchCooldownActive && !watchAwaitingReturn) {
+    btn.disabled = s.tasks_today <= 0;
+    btn.textContent = s.tasks_today <= 0 ? "Come back tomorrow" : "Watch Ad";
+  }
+
+  // Refer tab
+  document.getElementById("refer-link").textContent = s.referral_link;
+  document.getElementById("refer-reward").textContent = fmt(s.referral_reward_usd);
+  document.getElementById("r-referred").textContent = s.referred_count;
+  document.getElementById("r-successful").textContent = s.successful_referrals;
+  document.getElementById("r-earnings").textContent = fmt(s.referral_earned);
+
+  // Wallet tab
+  document.getElementById("w-balance").textContent = fmt(s.balance);
+  document.getElementById("w-hold").textContent = "Hold: " + fmt(s.hold);
+}
+
+function devQuery() {
+  const sp = new URLSearchParams(location.search);
+  if (sp.get("dev_user_id")) return "?" + sp.toString();
+  return "";
+}
+
+async function fetchMe() {
+  try {
+    const res = await fetch(BASE + "/api/me" + devQuery(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData })
+    });
+    if (!res.ok) {
+      document.getElementById("balance").textContent = "—";
+      document.getElementById("refer-id").textContent = "Open from Telegram";
+      return;
     }
+    render(await res.json());
+  } catch (e) {
+    document.getElementById("balance").textContent = "—";
+  }
+}
 
-    let startTime = Date.now();   // 👈 START tracking BEFORE ad
+// 10-second cooldown after watching an ad. The countdown only starts
+// once the user is back inside the mini app (visibilitychange → visible).
+// If they never left (e.g. ad blocked / placeholder), a 2 s fallback
+// kicks the countdown off so the button doesn't get stuck.
+const WATCH_COOLDOWN_SECONDS = 10;
+let watchAwaitingReturn = false;
+let watchHidWhileWaiting = false;
+let watchFallbackTimer = null;
+let watchCooldownActive = false;
 
-    show_10932641();              // 👈 Monetag ad trigger
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (watchAwaitingReturn) watchHidWhileWaiting = true;
+    return;
+  }
+  if (watchAwaitingReturn && watchHidWhileWaiting) {
+    watchAwaitingReturn = false;
+    watchHidWhileWaiting = false;
+    if (watchFallbackTimer) { clearTimeout(watchFallbackTimer); watchFallbackTimer = null; }
+    startWatchCooldown();
+  }
+});
 
-    setTimeout(() => {
+function startWatchCooldown() {
+  const btn = document.getElementById("watch-btn");
+  if (!btn) return;
+  watchCooldownActive = true;
+  let remaining = WATCH_COOLDOWN_SECONDS;
+  btn.disabled = true;
+  btn.textContent = "Wait " + remaining + "s";
+  const tick = () => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      watchCooldownActive = false;
+      const noneLeft = !state || state.tasks_today <= 0;
+      btn.disabled = noneLeft;
+      btn.textContent = noneLeft ? "Come back tomorrow" : "Watch Ad";
+      return;
+    }
+    btn.textContent = "Wait " + remaining + "s";
+    setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 1000);
+}
 
-        let watchedTime = Date.now() - startTime;
-
-        // 🔥 REWARD SYSTEM GOES HERE
-        if(watchedTime > 4000){
-
-            coins += 10;
-            tasks -= 1;
-
-            localStorage.setItem("coins", coins);
-            localStorage.setItem("tasks", tasks);
-
-            if(window.Telegram?.WebApp?.sendData){
-                Telegram.WebApp.sendData(JSON.stringify({
-                    coins: coins
-                }));
-            }
-
-            document.getElementById("status").innerText = "Reward +10 coins";
-            updateUI();
-
-        } else {
-            alert("Ad not properly viewed");
+async function watchAd() {
+  // Placeholder for the real ad SDKs (Monetag / Adsgram / Adsterra).
+  if (watchCooldownActive || watchAwaitingReturn) return;
+  const btn = document.getElementById("watch-btn");
+  btn.disabled = true;
+  btn.textContent = "Loading ad…";
+  showToast("Loading ad…");
+  await new Promise(r => setTimeout(r, 600));
+  try {
+    const res = await fetch(BASE + "/api/watch" + devQuery(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      render(data);
+      showToast("Ad watched!");
+      // Begin "awaiting return" window. Cooldown starts the moment the
+      // user comes back to the app, or 2 s later if they never left.
+      watchAwaitingReturn = true;
+      watchHidWhileWaiting = document.hidden;
+      btn.disabled = true;
+      btn.textContent = "Watching ad…";
+      if (watchFallbackTimer) clearTimeout(watchFallbackTimer);
+      watchFallbackTimer = setTimeout(() => {
+        watchFallbackTimer = null;
+        if (watchAwaitingReturn && !watchHidWhileWaiting) {
+          watchAwaitingReturn = false;
+          startWatchCooldown();
         }
-
-    }, 6000); // wait window (important for Monetag)
-
-}
-        document.getElementById("status").innerText = "Reward Earned +10 coins";
-        document.getElementById("taskBtn").disabled = false;
-
-        updateUI();
-
-    }, 5000); // fake completion window
-
-}
-
-/* =========================
-   VIDEO TASK (extra engagement)
-========================= */
-function openVideo(){
-    alert("Video task coming soon");
+      }, 2000);
+    } else if (data.error === "no_tasks_left") {
+      render(data);
+      showToast("No tasks left today");
+    } else {
+      showToast("Failed: " + (data.error || res.status));
+      btn.disabled = false;
+      btn.textContent = "Watch Ad";
+    }
+  } catch (e) {
+    showToast("Network error");
+    btn.disabled = false;
+    btn.textContent = "Watch Ad";
+  }
 }
 
-/* =========================
-   DAILY RESET SYSTEM
-========================= */
-let today = new Date().toDateString();
-let saved = localStorage.getItem("day");
+async function submitWithdraw(method) {
+  const fields = {
+    bkash:  { addrId: "bkash-number",  amtId: "bkash-amount" },
+    bep20:  { addrId: "bep20-address", amtId: "bep20-amount" },
+    trx:    { addrId: "trx-address",   amtId: "trx-amount"   },
+  }[method];
+  if (!fields) return;
 
-if(saved !== today){
-    localStorage.setItem("day", today);
-    localStorage.setItem("tasks", 5);
+  const address = document.getElementById(fields.addrId).value.trim();
+  const amount  = parseFloat(document.getElementById(fields.amtId).value);
+
+  if (!address) { showToast("Please enter an address / number"); return; }
+  if (!amount || isNaN(amount) || amount <= 0) { showToast("Please enter a valid amount"); return; }
+
+  const btn = document.querySelector(`[data-submit="${method}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = "Submitting…"; }
+
+  try {
+    const res = await fetch(BASE + "/api/withdraw" + devQuery(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData, method, address, amount })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      render(data);
+      document.getElementById(fields.addrId).value = "";
+      document.getElementById(fields.amtId).value = "";
+      document.getElementById("success-msg").innerHTML =
+        "Your <b>" + data.method_label + "</b> withdrawal of <b>" + fmt(amount) +
+        "</b> is pending admin approval. You will receive a confirmation message in the bot once it's processed.";
+      walletGoTo("success");
+    } else {
+      showToast(data.error || ("Error " + res.status));
+      if (data.balance !== undefined) render(data);
+    }
+  } catch (e) {
+    showToast("Network error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Submit"; }
+  }
 }
+
+/* ---- Tab switching ---- */
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.tab;
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.getElementById(id).classList.add("active");
+    btn.classList.add("active");
+    if (id === "wallet") {
+      walletGoTo("main");
+    }
+  });
+});
+
+/* ---- Wallet screen flow ---- */
+function walletGoTo(name) {
+  document.querySelectorAll("#wallet .wallet-screen").forEach(s => s.classList.remove("active"));
+  const target = document.querySelector(`#wallet .wallet-screen[data-screen="${name}"]`);
+  if (target) {
+    target.classList.add("active");
+    // Re-trigger entry animations for method cards
+    target.querySelectorAll(".method-card").forEach((c, i) => {
+      c.classList.remove("show");
+      void c.offsetWidth;
+      setTimeout(() => c.classList.add("show"), 80 + i * 110);
+    });
+  }
+}
+
+document.querySelectorAll("#wallet [data-action]").forEach(el => {
+  el.addEventListener("click", () => {
+    const a = el.dataset.action;
+    if (a === "pick-bkash")   walletGoTo("bkash");
+    if (a === "pick-binance") walletGoTo("binance");
+    if (a === "pick-bep20")   walletGoTo("bep20");
+    if (a === "pick-trx")     walletGoTo("trx");
+  });
+});
+document.querySelectorAll("#wallet [data-back]").forEach(el => {
+  el.addEventListener("click", () => walletGoTo(el.dataset.back));
+});
+document.querySelectorAll("#wallet [data-submit]").forEach(el => {
+  el.addEventListener("click", () => submitWithdraw(el.dataset.submit));
+});
+
+/* ---- Copy buttons ---- */
+function copyText(value, msg) {
+  if (!value) return;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(String(value)).catch(() => {});
+  } else {
+    const ta = document.createElement("textarea");
+    ta.value = value; document.body.appendChild(ta);
+    ta.select(); try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  showToast(msg);
+}
+document.getElementById("copy-id").addEventListener("click", () => {
+  copyText(state && state.user_id, "Refer ID copied!");
+});
+document.getElementById("copy-refer-link").addEventListener("click", () => {
+  copyText(state && state.referral_link, "Referral link copied!");
+});
+
+document.getElementById("watch-btn").addEventListener("click", watchAd);
+
+fetchMe();
 </script>
-
 </body>
-</html>
+</html>"""
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    BOT_USERNAME = _fetch_bot_username()
+    print(
+        f"AdPulse Mini App listening on 0.0.0.0:{PORT} "
+        f"(base path: {BASE_PATH or '/'}, bot: @{BOT_USERNAME or 'unknown'})"
+    )
+    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)
